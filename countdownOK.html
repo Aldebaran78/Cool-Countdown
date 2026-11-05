@@ -1,0 +1,3393 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Countdown</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0b0f1a">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<script>
+// PWA: applica il tema salvato PRIMA del primo paint, senza flash del default
+try { const t = localStorage.getItem("cd_theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+<script>
+// i18n: applica la lingua salvata PRIMA del primo paint (regole CSS [data-lang])
+try { const l = localStorage.getItem("cd_lang"); if (l) document.documentElement.dataset.lang = l; } catch (e) {}
+</script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #0b0f1a;
+  --card: rgba(255, 255, 255, .06);
+  --border: rgba(255, 255, 255, .12);
+  --text: #e8ecf4;
+  --muted: #8b93a7;
+  --accent1: #6366f1;
+  --accent2: #22d3ee;
+  --glow: 99, 102, 241;
+}
+/* Temi di colore alternativi (suggerimento 16): il cambio è istantaneo
+   perché l'intera interfaccia deriva da queste custom properties */
+[data-theme="rosso"] { --accent1: #ef4444; --accent2: #f59e0b; --glow: 239, 68, 68; }
+[data-theme="verde"] { --accent1: #10b981; --accent2: #a3e635; --glow: 16, 185, 129; }
+[data-theme="rosa"]  { --accent1: #ec4899; --accent2: #8b5cf6; --glow: 236, 72, 153; }
+[data-theme="blu"]   { --accent1: #3b82f6; --accent2: #0ea5e9; --glow: 59, 130, 246; }
+[data-theme="ambra"] { --accent1: #f59e0b; --accent2: #fde047; --glow: 245, 158, 11; }
+[data-theme="viola"]   { --accent1: #8b5cf6; --accent2: #c084fc; --glow: 139, 92, 246; }
+[data-theme="arancio"] { --accent1: #f97316; --accent2: #fdba74; --glow: 249, 115, 22; }
+[data-theme="turchese"]{ --accent1: #0d9488; --accent2: #2dd4bf; --glow: 13, 148, 136; }
+[data-theme="corallo"] { --accent1: #f43f5e; --accent2: #fb7185; --glow: 244, 63, 94; }
+[data-theme="magenta"] { --accent1: #c026d3; --accent2: #e879f9; --glow: 192, 38, 211; }
+[data-theme="argento"] { --accent1: #94a3b8; --accent2: #e2e8f0; --glow: 148, 163, 184; }
+html, body { height: 100%; }
+body {
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  overflow: auto;
+  position: relative;
+  /* Riserva in alto lo spazio per il titolo (fisso al viewport) dimensionato
+     già per il massimo (300%): valore COSTANTE, così la card resta immobile
+     a qualsiasi grandezza del font e il titolo non può mai sovrapporvisi.
+     20px = top del .title-display; 1.6 = line-height(1.35)+padding(0.25em);
+     12px = buffer. In play torna a 0 perché la card riempie tutto lo schermo. */
+  padding-top: calc(20px + 2.3rem * 3 * 1.6 + 12px);
+}
+body.playing { padding-top: 0; }
+body::before, body::after {
+  content: "";
+  position: fixed;
+  width: 480px; height: 480px;
+  border-radius: 50%;
+  filter: blur(120px);
+  opacity: .35;
+  pointer-events: none;
+}
+body::before { background: var(--accent1); top: -120px; left: -120px; }
+body::after { background: var(--accent2); bottom: -140px; right: -100px; }
+.card {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  /* Due colonne: timer (con modalità Singolo / Coda) | impostazioni */
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+  /* 940px: larghezza minima perché i 6 preset (fino a "15 min") stiano
+     tutti su una riga nella colonna del timer senza andare a capo */
+  width: min(940px, calc(100vw - 32px));
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 28px;
+  padding: 34px;
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, .45);
+}
+/* Colonna sinistra: timer, identica all'impaginazione precedente */
+.timer-col {
+  text-align: center;
+  min-width: 0;
+  padding: 0 28px;
+  /* Colonna flessibile: lo stage (Singolo/Coda) prende l'altezza che resta
+     rispetto alla colonna delle impostazioni, quindi la card ha la STESSA
+     altezza in entrambe le modalità */
+  display: flex;
+  flex-direction: column;
+}
+.timer-col > .mode-switch, .timer-col > .ring-wrap, .timer-col > .controls, .timer-col > .hints { flex: none; }
+/* Campo titolo nella colonna sinistra */
+#title {
+  display: block;
+  width: min(320px, 90%);
+  margin: 0 auto 4px;
+  background: rgba(255, 255, 255, .05);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: .9rem;
+  text-align: center;
+  outline: none;
+  transition: border-color .2s;
+}
+#title:focus { border-color: var(--accent2); }
+#title::placeholder { color: var(--muted); }
+/* Titolo sempre in alto al centro dello schermo, nella stessa posizione
+   che ha durante il countdown: fisso rispetto al viewport, quindi resta
+   identico a riposo e in play senza mai spostare il resto del layout */
+.title-display {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  max-width: 90vw;
+  font-family: var(--tfont, inherit);
+  color: var(--tcolor, inherit);
+  font-size: calc(2.3rem * var(--tscale, 1));
+  font-weight: 600;
+  /* line-height 1 con overflow:hidden tagliava le discendenti (g, p, y) e gli
+     sbalzi dei font corsivi: più altezza di riga e un po' di respiro ai lati */
+  line-height: 1.35;
+  padding: .05em .25em .2em;
+  box-sizing: border-box;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Slider dimensione titolo (100-300%) */
+.ts-size { display: flex; align-items: center; gap: 8px; font-size: .8rem; user-select: none; }
+.ts-size input[type="range"] { flex: 1; accent-color: var(--accent2); cursor: pointer; }
+/* Anello responsive: 260px di default, si rimpicciolisce se la colonna
+   centrale è più stretta (SVG con viewBox e .time in inset:0 scalano da soli) */
+.ring-wrap { position: relative; width: min(180px, 100%); aspect-ratio: 1; margin: 6px auto 12px; }
+.ring-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* Colori del gradiente dell'anello: seguono il tema attivo senza JS */
+#grad stop:first-child { stop-color: var(--accent1); }
+#grad stop:last-child { stop-color: var(--accent2); }
+/* In play l'anello è nascosto: la barra in fondo mostra i progressi */
+body.playing .ring-svg { display: none; }
+/* Formato con ore: font ridotto perché "H:MM:SS" resti dentro il cerchio */
+.time.has-hours { font-size: calc(1.6rem + 14px); }
+/* Barra di avanzamento orizzontale in fondo: piena all'avvio, si ritira da destra a sinistra */
+.progress-bar {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  height: 40px;
+  z-index: 10;
+  background: rgba(255, 255, 255, .06);
+  display: none;
+}
+body.playing .progress-bar { display: block; }
+.progress-fill {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 100%;
+  background: linear-gradient(90deg, var(--accent1), var(--accent2));
+}
+.time {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: calc(2.7rem + 13px);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .02em;
+}
+/* Ultimi 10 secondi: numeri gialli con alone, come il testo del logo */
+.time.warn {
+  color: #fde047;
+  text-shadow: 0 0 28px rgba(253, 224, 71, .8),
+               0 0 10px rgba(253, 224, 71, .5),
+               0 3px 12px rgba(0, 0, 0, .7);
+}
+.presets { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 16px; }
+.preset {
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: .85rem;
+  cursor: pointer;
+  transition: color .15s, border-color .15s, transform .15s, background .15s;
+}
+.preset:hover { color: var(--text); border-color: rgba(255, 255, 255, .3); transform: translateY(-1px); }
+.preset.active {
+  background: linear-gradient(135deg, var(--accent1), var(--accent2));
+  color: #fff;
+  border-color: transparent;
+}
+.custom { display: flex; gap: 8px; justify-content: center; align-items: center; margin-bottom: 20px; }
+.custom input {
+  width: 64px;
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text);
+  font-size: 1.1rem;
+  font-weight: 600;
+  text-align: center;
+  padding: 8px 0;
+  outline: none;
+  font-variant-numeric: tabular-nums;
+  transition: border-color .15s;
+}
+.custom input:focus { border-color: var(--accent2); }
+.custom-presets { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 16px; }
+.cp-slot {
+  position: relative; min-width: 70px;
+  background: rgba(255, 255, 255, .04);
+  border: 1px dashed var(--border); color: var(--muted);
+  border-radius: 999px; padding: 6px 14px; font-size: .85rem;
+  font-family: inherit; cursor: pointer;
+  transition: color .15s, border-color .15s, transform .15s, background .15s;
+  font-variant-numeric: tabular-nums;
+}
+.cp-slot.filled { border-style: solid; color: var(--text); }
+.cp-slot:hover { color: var(--text); border-color: rgba(255, 255, 255, .3); transform: translateY(-1px); }
+.cp-slot.active { background: linear-gradient(135deg, var(--accent1), var(--accent2)); color: #fff; border-color: transparent; }
+.cp-slot .cp-del {
+  position: absolute; top: -7px; right: -7px;
+  width: 18px; height: 18px; line-height: 16px; border-radius: 50%;
+  background: #3a3a4a; color: #fff; border: 1px solid var(--border);
+  font-size: .72rem; cursor: pointer;
+  display: none; align-items: center; justify-content: center; padding: 0;
+}
+.cp-slot.filled .cp-del { display: flex; }
+.cp-slot .cp-del:hover { background: #e05252; border-color: #e05252; }
+.save-preset {
+  margin-left: 8px; background: rgba(255, 255, 255, .04);
+  border: 1px solid var(--border); color: var(--muted);
+  border-radius: 999px; padding: 6px 14px; font-size: .85rem;
+  font-family: inherit; cursor: pointer;
+  transition: color .15s, border-color .15s, background .15s;
+}
+.save-preset:hover { color: var(--text); border-color: rgba(255, 255, 255, .3); }
+.save-preset.full { border-color: #e05252; color: #ff9a9a; }
+.custom input::-webkit-outer-spin-button,
+.custom input::-webkit-inner-spin-button { -webkit-appearance: none; }
+.custom input { -moz-appearance: textfield; appearance: textfield; }
+.custom span { color: var(--muted); font-size: .8rem; }
+.controls { display: flex; gap: 12px; justify-content: center; }
+button.main {
+  flex: 1;
+  max-width: 200px;
+  border: none;
+  border-radius: 999px;
+  padding: 14px 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent1), var(--accent2));
+  cursor: pointer;
+  transition: transform .15s, box-shadow .15s;
+  box-shadow: 0 8px 24px rgba(var(--glow), .35);
+}
+button.main:hover { transform: translateY(-2px); box-shadow: 0 12px 32px rgba(var(--glow), .5); }
+button.main:active { transform: translateY(0); }
+button.ghost {
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 14px 20px;
+  font-size: 1.1rem;
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+button.ghost:hover { color: var(--text); border-color: rgba(255, 255, 255, .3); }
+.hints {
+  margin-top: 16px;
+  font-size: .75rem;
+  color: var(--muted);
+}
+/* Pulsatore in modalità coda: stesso gradiente, alone extra per segnalare lo stato */
+button.main.queue-mode { box-shadow: 0 8px 24px rgba(var(--glow), .35), 0 0 0 2px rgba(var(--accent2), .45); }
+/* ── Coda di countdown: colonna a sinistra del timer ────────────────────
+   Ogni riga = un timer della coda con titolo proprio e durata h:m:s.
+   Il JS popola #queueList, aggiorna #qCount e alterna il testo/la
+   classe del pulsante Avvia ↔ Avvio Coda (sezione "Coda di countdown"). */
+/* Selettore modalità sopra l'anello: Singolo | Coda */
+.mode-switch {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  margin: 0 auto 6px;
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.mode-btn {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: .85rem;
+  font-weight: 600;
+  padding: 7px 22px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color .15s, background .25s;
+}
+.mode-btn:hover { color: var(--text); }
+.mode-btn.active {
+  background: linear-gradient(135deg, var(--accent1), var(--accent2));
+  color: #fff;
+}
+/* Stage: contiene i due pannelli (Singolo e Coda) sovrapposti. Il pannello
+   Singolo scivola a sinistra e il pannello Coda entra da destra; l'altezza
+   dello stage segue quella del pannello attivo (impostata da JS). */
+.mode-stage {
+  position: relative;
+  overflow: hidden;
+  margin: 0 -4px;
+  /* flex-basis 0 + min-height: non spinge l'altezza della card, si adatta
+     allo spazio disponibile (con un minimo per non schiacciarsi) */
+  flex: 1 1 0;
+  /* intestazione + 5 timer + maschera con riga logo aperta: la card si allunga
+     solo se serve (e solo verso l'alto, vedi anchorCard) */
+  min-height: 364px;
+  transition: opacity .4s ease;
+}
+.pane {
+  position: absolute;
+  inset: 0;
+  min-width: 0;
+  padding: 4px 4px 0;
+}
+.pane-single {
+  transform: none;
+  opacity: 1;
+  visibility: visible;
+  transition: transform .45s cubic-bezier(.4, 0, .2, 1), opacity .45s ease, visibility 0s;
+}
+.pane-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 12px;
+  transform: translateX(100%);
+  opacity: 0;
+  visibility: hidden; /* fuori dal tab order quando non attivo */
+  transition: transform .45s cubic-bezier(.4, 0, .2, 1), opacity .45s ease, visibility 0s linear .45s;
+}
+.timer-col.is-queue .pane-single {
+  transform: translateX(-100%);
+  opacity: 0;
+  visibility: hidden;
+  transition: transform .45s cubic-bezier(.4, 0, .2, 1), opacity .45s ease, visibility 0s linear .45s;
+}
+.timer-col.is-queue .pane-queue {
+  transform: none;
+  opacity: 1;
+  visibility: visible;
+  transition: transform .45s cubic-bezier(.4, 0, .2, 1), opacity .45s ease, visibility 0s;
+}
+/* La lista ha altezza fissa e scorre internamente
+   se i timer in coda sono più di quanti stiano visibili */
+.queue-list {
+  flex: 1 1 0;
+  /* 5 righe da 34px + 4 spazi da 5px: sempre visibili senza scorrere, anche con
+     la riga del logo aperta nella maschera */
+  min-height: 192px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;          /* niente scatti quando compare la scrollbar */
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-right: 4px;
+}
+/* Scrollbar sottile nello stile della pagina: Firefox usa le proprietà standard,
+   Chrome/Safari/Edge i pseudo-elementi (se ci sono le proprietà standard,
+   Chrome ignorerebbe i pseudo-elementi, quindi solo dove non sono supportati) */
+@supports not selector(::-webkit-scrollbar) {
+  .queue-list { scrollbar-width: thin; scrollbar-color: rgba(var(--glow), .6) rgba(255, 255, 255, .04); }
+}
+.queue-list::-webkit-scrollbar { width: 8px; }
+.queue-list::-webkit-scrollbar-track { background: rgba(255, 255, 255, .04); border-radius: 999px; }
+.queue-list::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--accent1), var(--accent2));
+  border-radius: 999px;
+}
+.queue-list::-webkit-scrollbar-thumb:hover { filter: brightness(1.2); }
+/* Coda vuota: segnaposto al centro dell'area fissa */
+.queue-list:empty::before {
+  content: "Nessun timer in coda";
+  margin: auto;
+  color: var(--muted);
+  font-size: .8rem;
+}
+/* Testo della coda vuota nelle altre lingue (il default sopra è l'italiano) */
+[data-lang="en"] .queue-list:empty::before { content: "No timers in the queue"; }
+[data-lang="fr"] .queue-list:empty::before { content: "Aucun minuteur en file"; }
+[data-lang="es"] .queue-list:empty::before { content: "No hay temporizadores en la cola"; }
+[data-lang="de"] .queue-list:empty::before { content: "Keine Timer in der Warteschlange"; }
+[data-lang="ru"] .queue-list:empty::before { content: "В очереди нет таймеров"; }
+[data-lang="zh"] .queue-list:empty::before { content: "队列中没有计时器"; }
+.queue-head { display: flex; align-items: baseline; justify-content: space-between; }
+.q-count {
+  font-size: .75rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.q-count[hidden] { display: none; }
+/* Ogni timer della coda ha una sfumatura diversa e molto soft del tema scelto:
+   --qa = quanta parte di accent1 (il resto è accent2), --qt = intensità della
+   tinta. Due color-mix annidati (a 2 colori) funzionano in tutti i browser;
+   il vecchio color-mix a 3 colori veniva scartato e lasciava il fondo scuro.
+   Le tinte scorrono da accent1 ad accent2 e si ripetono ogni 6 elementi. */
+.queue-item, .q-mask {
+  --qa: 100%;
+  --qt: 14%;
+  --tint: color-mix(in srgb, color-mix(in srgb, var(--accent1) var(--qa), var(--accent2)) var(--qt), transparent);
+  background-color: rgba(255, 255, 255, .03);
+  background-image: linear-gradient(var(--tint), var(--tint));
+  border: 1px solid var(--border);
+}
+/* Riga compatta dell'elenco: ① Titolo · durata · ✕ (una riga sola, ~34px) */
+.queue-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 10px;
+  padding: 4px 6px 4px 8px;
+  transition: border-color .15s, box-shadow .15s;
+}
+.qr-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  font-size: .85rem;
+}
+.qr-title.empty { color: var(--muted); font-style: italic; }
+.qr-logo {
+  flex: none;
+  width: 20px; height: 20px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 5px;
+  font-size: .9rem;
+  line-height: 1;
+}
+.qr-logo[hidden] { display: none; }
+.qr-logo img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.qr-time {
+  flex: none;
+  font-size: .8rem;
+  font-weight: 600;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.queue-item .q-num { width: 20px; height: 20px; font-size: .68rem; }
+.queue-item .q-del { width: 24px; height: 24px; }
+/* Colore a contrasto: opposto sulla ruota dei colori (+180° di tonalità) rispetto
+   al tema scelto. Dove il browser non supporta i colori relativi resta l'ambra. */
+:root { --contrast: #f59e0b; }
+@supports (color: oklch(from red l c h)) {
+  :root { --contrast: oklch(from var(--accent1) 0.82 0.17 calc(h + 180)); }
+}
+/* Il timer che partirà alla prossima pressione di Spazio (o riprenderà dalla pausa) */
+.queue-item.next {
+  --tint: color-mix(in srgb, var(--contrast) 24%, transparent);
+  border-color: var(--contrast);
+  box-shadow: 0 0 0 1px var(--contrast), 0 0 16px color-mix(in srgb, var(--contrast) 45%, transparent);
+}
+.queue-item.next .q-num { background: var(--contrast); color: #111; }
+.queue-item.next .qr-title { font-weight: 600; }
+.queue-item.next .qr-time { color: var(--contrast); }
+.queue-item.next .qr-time { display: inline-flex; align-items: center; gap: 5px; }
+.queue-item.next .qr-time::before {
+  content: "";
+  width: 0; height: 0;
+  border-left: 6px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+}
+/* Già eseguiti in questa sessione */
+.queue-item.done-it { opacity: .45; }
+.queue-item.selected { border-color: var(--accent2); box-shadow: 0 0 0 1px var(--accent2); }
+/* Maschera unica sotto l'elenco (stessa grafica dell'elemento di coda) */
+.q-mask {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-radius: 12px;
+  padding: 8px 10px;
+  transition: border-color .2s, box-shadow .2s;
+}
+.q-mask.editing { border-color: var(--accent2); box-shadow: 0 0 0 1px rgba(var(--glow), .45); }
+.q-addbtn {
+  flex: none;
+  width: 28px; height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent1), var(--accent2));
+  color: #fff;
+  font-size: 1.2rem;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: transform .1s, filter .15s;
+}
+.q-addbtn:hover { transform: scale(1.1); filter: brightness(1.12); }
+.q-addbtn:active { transform: scale(.95); }
+/* "Salta" per riga: cerchio come duplica/rimuovi con icona »| (doppia freccia
+   + barra); visibile solo in una sessione di coda in pausa/attesa e mai sulla
+   riga che partirà con la prossima pressione di Spazio */
+.q-skip {
+  flex: none;
+  width: 24px; height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color .15s, border-color .15s, background .15s, transform .1s;
+}
+.q-skip svg { display: block; }
+.q-skip:hover { color: #fff; border-color: var(--accent2); background: rgba(var(--glow), .25); transform: scale(1.08); }
+.q-skip[hidden] { display: none; }
+.q-time input.bad { border-color: #e05252; }
+.queue-item { cursor: grab; touch-action: pan-y; }
+/* Logo proprio del timer: pulsante tondo come duplica/rimuovi + riga a scomparsa */
+.q-logo {
+  flex: none;
+  width: 28px; height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  overflow: hidden;
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--muted);
+  font-size: .8rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: color .15s, border-color .15s, background .15s, transform .1s;
+}
+.q-logo img { width: 100%; height: 100%; object-fit: contain; padding: 3px; display: block; }
+.q-logo:hover { color: #fff; border-color: var(--accent2); background: rgba(var(--glow), .25); transform: scale(1.08); }
+.q-logo.on, .q-logo[aria-expanded="true"] { border-color: var(--accent2); color: var(--text); }
+.q-color-dot {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--c1), var(--c2));
+}
+.q-color-row { display: none; justify-content: center; align-items: center; flex-wrap: wrap; gap: 9px; padding: 3px 0; }
+.q-mask.color-open .q-color-row { display: flex; }
+.q-theme-dot {
+  width: 18px; height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: linear-gradient(135deg, var(--c1), var(--c2));
+  cursor: pointer;
+  transition: transform .15s ease, border-color .15s ease;
+}
+.q-theme-dot:hover { transform: scale(1.2); }
+.q-theme-dot.on { border-color: #fff; }
+/* Pallino nella riga dell'elenco: solo se il timer ha un colore proprio */
+.qr-theme {
+  flex: none;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--c1), var(--c2));
+}
+.qr-theme[hidden] { display: none; }
+.q-logo-row { display: none; align-items: center; gap: 6px; }
+.q-mask.logo-open .q-logo-row { display: flex; }
+.q-logo-prev {
+  flex: none;
+  width: 30px; height: 30px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 1.05rem;
+  line-height: 1;
+}
+.q-logo-prev img { width: 100%; height: 100%; object-fit: contain; padding: 2px; display: block; }
+.q-logo-in {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: .78rem;
+  padding: 7px 9px;
+  outline: none;
+  transition: border-color .2s;
+}
+.q-logo-in:focus { border-color: var(--accent2); }
+.q-logo-in.bad { border-color: #e05252; }
+.q-logo-in::placeholder { color: var(--muted); }
+.q-logo-file, .q-logo-clr {
+  flex: none;
+  background: rgba(255, 255, 255, .05);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  font-size: .75rem;
+  padding: 7px 10px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.q-logo-clr { border-style: solid; color: var(--muted); }
+.q-logo-file:hover { border-color: var(--accent2); background: rgba(var(--glow), .15); }
+.q-logo-clr:hover { color: #ff9a9a; border-color: #e05252; }
+.queue-item input { cursor: text; }
+.queue-item .q-num { touch-action: none; }
+/* Riga trascinata: sollevata sopra le altre, con ombra e bordo del tema */
+.queue-item.dragging {
+  position: relative;
+  z-index: 5;
+  cursor: grabbing;
+  border-color: var(--accent2);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, .5), 0 0 0 1px var(--accent2);
+}
+.queue-list.is-dragging, .queue-list.is-dragging * { cursor: grabbing !important; user-select: none; -webkit-user-select: none; }
+.queue-item:nth-child(6n + 2) { --qa: 80%; }
+.queue-item:nth-child(6n + 3) { --qa: 60%; }
+.queue-item:nth-child(6n + 4) { --qa: 40%; }
+.queue-item:nth-child(6n + 5) { --qa: 20%; }
+.queue-item:nth-child(6n + 6) { --qa: 0%; }
+/* Riga superiore: numero · titolo (flessibile) · duplica · rimuovi */
+.q-top { display: flex; align-items: center; gap: 8px; }
+.q-num {
+  flex: none;
+  width: 22px; height: 22px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent1), var(--accent2));
+  color: #fff;
+  font-size: .72rem;
+  font-weight: 700;
+}
+.q-title {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: .85rem;
+  padding: 7px 10px;
+  outline: none;
+  transition: border-color .2s;
+}
+.q-title:focus { border-color: var(--accent2); }
+.q-title::placeholder { color: var(--muted); }
+/* Riga inferiore: durata h:m:s distribuita su tutta la larghezza */
+.q-time { display: flex; align-items: center; justify-content: center; gap: 5px; }
+.q-time span + input { margin-left: 16px; } /* spazio tra un gruppo (valore + etichetta) e il successivo */
+.q-time input {
+  width: 40px;
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: .8rem;
+  font-weight: 600;
+  text-align: center;
+  padding: 6px 0;
+  outline: none;
+  font-variant-numeric: tabular-nums;
+  transition: border-color .15s;
+}
+.q-time input:focus { border-color: var(--accent2); }
+.q-time span { color: var(--muted); font-size: .75rem; }
+.q-time input::-webkit-outer-spin-button,
+.q-time input::-webkit-inner-spin-button { -webkit-appearance: none; }
+.q-time input { -moz-appearance: textfield; appearance: textfield; }
+/* Duplica / rimuovi: cerchi con icona SVG centrata al pixel (display:grid +
+   place-items:center), fondo appena visibile e hover colorato per ruolo */
+.q-dup, .q-del {
+  flex: none;
+  width: 28px; height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color .15s, border-color .15s, background .15s, transform .1s;
+}
+.q-dup svg, .q-del svg { display: block; }
+.q-dup:hover { color: #fff; border-color: var(--accent2); background: rgba(var(--glow), .25); transform: scale(1.08); }
+.q-del:hover { color: #fff; border-color: #e05252; background: rgba(224, 82, 82, .25); transform: scale(1.08); }
+/* Colonna destra: tutte le impostazioni */
+.settings {
+  position: relative;
+  padding-left: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+  font-size: .85rem;
+}
+/* Separatore verticale tra timer e impostazioni: stessa hairline sfumata
+   con glow del tema dei separatori orizzontali tra le sezioni */
+.settings::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -12px; /* metà del padding-left di 24px */
+  width: 1px;
+  background: linear-gradient(180deg, transparent, var(--border) 15%, rgba(var(--glow), .55) 50%, var(--border) 85%, transparent);
+  box-shadow: 0 0 8px rgba(var(--glow), .25);
+}
+.set-group { display: flex; flex-direction: column; gap: 10px; }
+/* Separatore tra sezioni: hairline sfumata con glow nel colore del tema */
+.set-group + .set-group { position: relative; }
+.set-group + .set-group::before {
+  content: "";
+  position: absolute;
+  top: -15px; /* metà del gap di 30px tra le sezioni */
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border) 15%, rgba(var(--glow), .55) 50%, var(--border) 85%, transparent);
+  box-shadow: 0 0 8px rgba(var(--glow), .25);
+}
+.set-title {
+  font-size: .72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--muted);
+}
+.switch { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+.switch input { accent-color: var(--accent2); cursor: pointer; }
+.tick-sec { display: flex; flex-direction: row; gap: 14px; }
+.tick-sec label { display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; font-size: .8rem; }
+.tick-sec input { accent-color: var(--accent2); cursor: pointer; }
+.tick-hint { font-size: .75rem; color: var(--muted); }
+/* Controlli suono: select + slider volume */
+.sound-ctl { display: flex; align-items: center; gap: 8px; }
+.sound-ctl label { user-select: none; }
+/* Tendina colore titolo: bottone con campionario + popup di riquadri colorati */
+.color-pick { position: relative; display: inline-flex; }
+#colorBtn {
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 7px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+.color-chip { width: 20px; height: 13px; border-radius: 3px; background: #fff; display: block; }
+.color-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 60;
+  background: rgba(15, 18, 28, .97);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: repeat(3, 26px);
+  gap: 6px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .45);
+}
+.color-pop[hidden] { display: none; }
+.color-swatch { width: 26px; height: 26px; border-radius: 6px; border: 2px solid transparent; cursor: pointer; padding: 0; }
+.color-swatch:hover { transform: scale(1.12); }
+.color-swatch.sel { border-color: var(--accent2); }
+#soundSel, #fontSel {
+  background: rgba(255, 255, 255, .05);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: .8rem;
+  cursor: pointer;
+}
+/* Opzioni del dropdown: testo nero su bianco, leggibili in ogni tema/browser */
+#soundSel option, #fontSel option { background: #fff; color: #000; }
+#volIn {
+  width: 90px;
+  accent-color: var(--accent2);
+  cursor: pointer;
+}
+/* Logo in alto a sinistra */
+.logo {
+  position: fixed;
+  top: 16px; left: 16px;
+  z-index: 0; /* sotto la card (z-index 1): l'anteprima non copre mai il menu */
+  width: var(--logo-size, 168px);
+  height: var(--logo-size, 168px);
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  overflow: hidden;
+}
+.logo img { width: 100%; height: 100%; object-fit: contain; object-position: center top; padding: 0 4%; }
+.logo-text { font-size: calc(var(--logo-size, 168px) * .42); font-weight: 700; line-height: 1; }
+#logoPh { width: calc(var(--logo-size, 168px) * .32); height: calc(var(--logo-size, 168px) * .32); }
+.logo [hidden] { display: none !important; }
+/* In play il menu è nascosto: il logo torna sopra i numeri */
+body.playing .logo { z-index: 10; }
+/* A schermo intero, se non c'è un logo reale (solo placeholder),
+   nascondi l'intero riquadro per non mostrare il quadrato vuoto */
+body.playing .logo:not(.has-logo) { display: none; }
+/* Logo a schermo intero: rimuovi il quadrato (sfondo, bordo, blur)
+   e aggiungi un'ombra per far risaltare l'immagine sullo sfondo scuro */
+body.playing .logo.has-logo {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  overflow: visible;
+}
+body.playing .logo img {
+  filter: drop-shadow(0 8px 28px rgba(var(--glow), .75))
+          drop-shadow(0 0 14px rgba(var(--glow), .55))
+          drop-shadow(0 3px 10px rgba(0, 0, 0, .6));
+}
+body.playing .logo .logo-text {
+  text-shadow: 0 0 28px rgba(var(--glow), .9), 0 0 10px rgba(var(--glow), .6), 0 3px 12px rgba(0, 0, 0, .7);
+}
+/* Logo: sezione fissa nella colonna delle impostazioni */
+/* Logo del timer (singolo): le tre caselle + Applica/Rimuovi vivono nel pannello
+   Singolo, tra i campi del tempo e il pulsante Avvia. In coda ogni timer ha il
+   proprio logo, quindi qui si imposta quello globale del countdown singolo. */
+/* Separatore e titolo "Logo" nel pannello Singolo: stesso stile delle
+   sezioni del menu (hairline sfumata con glow, titolo .set-title). */
+.single-logo-sep {
+  max-width: 540px;
+  height: 1px;
+  margin: 20px auto 12px;
+  background: linear-gradient(90deg, transparent, var(--border) 15%, rgba(var(--glow), .55) 50%, var(--border) 85%, transparent);
+  box-shadow: 0 0 8px rgba(var(--glow), .25);
+}
+.single-logo-title { text-align: center; margin: 0 auto 10px; }
+.single-logo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  align-items: stretch;
+  max-width: 540px;
+  margin: 0 auto 18px;
+}
+.single-logo .lp-btn,
+.single-logo input[type="text"] {
+  flex: 1 1 140px;
+  min-width: 0;
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: .85rem;
+  padding: 9px 10px;
+  outline: none;
+  transition: border-color .15s, background .15s;
+}
+.single-logo .lp-btn { border-style: dashed; cursor: pointer; }
+.single-logo .lp-btn:hover { border-color: var(--accent2); background: rgba(34, 211, 238, .08); }
+.single-logo input[type="text"]:focus { border-color: var(--accent2); }
+.single-logo .lp-clear {
+  flex: 0 0 auto;
+  width: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, .05);
+  color: var(--muted);
+  border-radius: 10px;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+.single-logo .lp-clear:hover { color: var(--text); border-color: rgba(255, 255, 255, .3); }
+.single-logo .lp-err { flex-basis: 100%; text-align: center; }
+.lp-btn {
+  display: block;
+  background: rgba(255, 255, 255, .05);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: .9rem;
+  text-align: center;
+  padding: 10px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.lp-btn:hover { border-color: var(--accent2); background: rgba(34, 211, 238, .08); }
+.lp-size { display: flex; align-items: center; gap: 10px; font-size: .85rem; color: var(--muted); }
+.lp-size input[type="range"] { flex: 1; accent-color: var(--accent2); cursor: pointer; }
+.lp-err { font-size: .8rem; color: #f87171; }
+/* Ora di fine prevista: in basso a destra, solo durante il countdown */
+.end-time {
+  position: fixed;
+  right: 20px; bottom: 52px;
+  z-index: 10;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-size: .95rem;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  /* Stessa ombra del logo a schermo intero (3 livelli: glow + alone + nero) */
+  box-shadow: 0 8px 28px rgba(var(--glow), .75),
+              0 0 14px rgba(var(--glow), .55),
+              0 3px 10px rgba(0, 0, 0, .6);
+}
+.end-time[hidden] { display: none; }
+/* Modalità play: countdown a tutto schermo, ottimizzato per 16:9 */
+body.playing { overflow: hidden; cursor: none; }
+/* Crossfade all'avvio: il menu sfuma via (opacity) uscendo dal flusso
+   (position:absolute), così l'anello si centra a tutto schermo mentre
+   il timer emerge con un fadein. Al reset/pausa il menu torna in 400 ms. */
+.presets, .custom, .custom-presets, .controls, .hints, .settings, .mode-switch { transition: opacity .4s ease; }
+body.playing .presets,
+body.playing .custom,
+body.playing .custom-presets,
+body.playing .controls,
+body.playing .mode-stage,
+body.playing .mode-switch,
+body.playing .hints,
+body.playing .settings {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+body.playing .timer-col { padding: 0; }
+/* Fadein del timer (titolo + anello) sincronizzato col fadeout del menu */
+body.playing .title-display,
+body.playing .ring-wrap { animation: timerIn .45s ease both; }
+@keyframes timerIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+body.playing .card {
+  top: 0 !important; /* a schermo intero niente scostamento */
+  width: 100%;
+  height: 100vh;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  display: grid;
+  grid-template-columns: 1fr; /* colonna unica a tutta larghezza: il timer non resta nella colonna sinistra stretta */
+  grid-template-rows: 1fr;    /* riga unica che riempie l'altezza → anello centrato (il titolo è fisso in alto) */
+  place-items: center;
+}
+body.playing .ring-wrap {
+  width: min(96vw, 160vh);
+  height: auto;
+  aspect-ratio: 16 / 9;
+  margin: 0;
+}
+/* Play: i numeri riempiono lo schermo. fitTime() misura il font reale
+   e imposta la dimensione esatta (~90% della larghezza); questi valori
+   sono solo il fallback del primo frame, prima che JS intervenga */
+body.playing .time {
+  position: fixed;
+  inset: 0;
+  font-size: 24vw;
+}
+body.playing .time.has-hours { font-size: 17vw; }
+/* A tempo scaduto i numeri 00:00 diventano rossi con alone e pulsano col messaggio */
+body.done .time {
+  color: #ef4444;
+  text-shadow: 0 0 28px rgba(239, 68, 68, .8),
+               0 0 10px rgba(239, 68, 68, .5),
+               0 3px 12px rgba(0, 0, 0, .7);
+  animation: pulse 1s ease-in-out infinite;
+}
+/* "Tempo scaduto!": sotto il 00:00, rosso pulsante continuo (finché non si preme Spazio/R) */
+.done-msg {
+  margin-top: 2.5vmin;
+  font-size: 6vmin;
+  font-weight: 800;
+  letter-spacing: .04em;
+  color: #ef4444;
+  animation: pulse 1s ease-in-out infinite;
+}
+/* A schermo intero il messaggio è ancorato in basso, centrato */
+body.playing .done-msg {
+  position: fixed;
+  left: 0; right: 0;
+  top: 84%;
+  margin-top: 0;
+  text-align: center;
+  font-size: 9vmin;
+}
+@keyframes pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.06); opacity: .7; }
+}
+/* Temi di colore: pallini nel pannello impostazioni */
+.themes { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.theme-dot {
+  width: 18px; height: 18px; border-radius: 50%; padding: 0;
+  border: 2px solid transparent; cursor: pointer;
+  background: linear-gradient(135deg, var(--c1), var(--c2));
+  transition: transform .15s ease, border-color .15s ease;
+}
+.theme-dot:hover { transform: scale(1.2); }
+.theme-dot.active { border-color: #fff; }
+/* Importa / Esporta: due pulsanti affiancati, stile ghost compatto del pannello */
+.io-btns { display: flex; gap: 8px; }
+.io-btn {
+  flex: 1;
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: .85rem;
+  cursor: pointer;
+  transition: color .15s, border-color .15s, background .15s;
+}
+.io-btn:hover { color: var(--text); border-color: var(--accent2); background: rgba(var(--glow), .15); }
+/* Bandierine lingue */
+.lang-flags { display: flex; gap: 4px; }
+.lang-flag {
+  /* flex:1 + min-width:0 → le 7 bandierine dividono la larghezza disponibile
+     e restano SEMPRE su una sola riga, a qualsiasi dimensione del pannello */
+  flex: 1 1 0;
+  min-width: 0;
+  white-space: nowrap;
+  line-height: 1;
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 0;
+  cursor: pointer;
+  transition: transform .15s, border-color .15s, background .15s;
+}
+.lang-flag svg { display: block; margin: 0 auto; width: min(28px, 100%); height: auto; border-radius: 3px; }
+.lang-flag:hover { transform: translateY(-2px); border-color: rgba(255, 255, 255, .3); }
+.lang-flag.active {
+  background: linear-gradient(135deg, var(--accent1), var(--accent2));
+  border-color: transparent;
+}
+.io-msg { margin: 0; font-size: .75rem; color: var(--muted); }
+.io-msg.err { color: #ff9a9a; }
+.io-msg[hidden] { display: none; }
+/* Animazione di ingresso (suggerimento 17): fade + scale in 300 ms,
+   l'anello arriva con 100 ms di ritardo per un effetto a cascata */
+@keyframes enter {
+  from { opacity: 0; transform: scale(.94); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.card      { animation: enter .3s ease-out both; }
+.ring-wrap { animation: enter .3s ease-out .1s both; }
+@media (prefers-reduced-motion: reduce) {
+  .card, .ring-wrap { animation: none; }
+}
+/* Finestre strette: le due colonne si impilano (timer → impostazioni) */
+@media (max-width: 920px) {
+  .card { grid-template-columns: 1fr; }
+  .timer-col { order: 1; padding: 0; }
+  .settings {
+    order: 3;
+    padding-left: 0;
+    padding-top: 20px;
+    margin-top: 4px;
+  }
+  /* Il separatore verticale diventa orizzontale in cima alle impostazioni */
+  .settings::before {
+    top: -10px;
+    bottom: auto;
+    left: 0;
+    right: 0;
+    width: auto;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--border) 15%, rgba(var(--glow), .55) 50%, var(--border) 85%, transparent);
+  }
+}
+.controls button[hidden] { display: none; }
+#clearQueueBtn:not([hidden]) { display: grid; place-items: center; padding: 0 16px; }
+#clearQueueBtn svg { display: block; }
+#clearQueueBtn:hover { color: #ff9a9a; border-color: #e05252; background: rgba(224, 82, 82, .12); }
+</style>
+</head>
+<body>
+<!-- Gradiente condiviso sempre presente nel DOM (SVG a dimensione zero):
+     se fosse definito dentro l'SVG dell'anello, in Firefox un gradiente
+     riferito da un elemento nascosto non verrebbe risolto -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"/>
+      <stop offset="100%"/>
+    </linearGradient>
+  </defs>
+</svg>
+<div class="logo" id="logo">
+  <img id="logoImg" alt="Logo" hidden>
+  <span id="logoTxt" class="logo-text" hidden></span>
+  <svg id="logoPh" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#8b93a7" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <rect x="3" y="3" width="18" height="18" rx="3"/>
+    <circle cx="9" cy="9" r="2"/>
+    <path d="M21 15l-5-5L5 21"/>
+  </svg>
+</div>
+<div class="end-time" id="endTime" hidden></div>
+<div class="progress-bar" id="progressBar"><div class="progress-fill" id="progressFill"></div></div>
+<div class="title-display" id="titleDisplay"></div>
+<main class="card">
+  <section class="timer-col">
+  <div class="mode-switch" role="tablist" data-i18n-aria="mode_aria" aria-label="Modalità">
+    <button type="button" id="modeSingle" class="mode-btn active" role="tab" aria-selected="true" data-i18n="mode_single">Singolo</button>
+    <button type="button" id="modeQueue" class="mode-btn" role="tab" aria-selected="false" data-i18n="mode_queue">Coda</button>
+  </div>
+  <div class="ring-wrap">
+    <svg class="ring-svg" viewBox="0 0 260 260" aria-hidden="true">
+      <circle cx="130" cy="130" r="122" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="8"/>
+      <circle id="ringFg" cx="130" cy="130" r="122" fill="none" stroke="url(#grad)" stroke-width="8"
+              stroke-linecap="round" pathLength="100" stroke-dasharray="100" stroke-dashoffset="0"
+              transform="rotate(-90 130 130)"/>
+    </svg>
+    <div class="time" id="time" role="timer" aria-live="polite">15:00</div>
+    <div class="done-msg" id="doneMsg" hidden data-i18n="time_up">Tempo scaduto!</div>
+  </div>
+  <div class="mode-stage" id="modeStage">
+  <div class="pane pane-single" id="paneSingle">
+  <div class="presets" id="presets">
+    <button class="preset" data-min="1" data-i18n="p1">1 min</button>
+    <button class="preset" data-min="2" data-i18n="p2">2 min</button>
+    <button class="preset" data-min="3" data-i18n="p3">3 min</button>
+    <button class="preset" data-min="5" data-i18n="p5">5 min</button>
+    <button class="preset" data-min="10" data-i18n="p10">10 min</button>
+    <button class="preset active" data-min="15" data-i18n="p15">15 min</button>
+  </div>
+  <div class="custom-presets" id="customPresets"></div>
+  <div class="custom">
+    <input id="h" type="number" min="0" max="99" value="0" data-i18n-aria="aria_h" aria-label="Ore">
+    <span data-i18n="unit_h">ore</span>
+    <input id="m" type="number" min="0" max="59" value="15" data-i18n-aria="aria_m" aria-label="Minuti">
+    <span data-i18n="unit_m">min</span>
+    <input id="s" type="number" min="0" max="59" value="0" data-i18n-aria="aria_s" aria-label="Secondi">
+    <span data-i18n="unit_s">sec</span>
+    <button id="savePresetBtn" class="save-preset" data-i18n-title="cp_save" title="Salva questo tempo come preset" data-i18n="save_short">💾 Salva</button>
+  </div>
+  <div class="single-logo-sep" role="separator"></div>
+  <h3 class="set-title single-logo-title" data-i18n="title_label">Titolo</h3>
+  <input id="title" type="text" placeholder="Scrivi qui il titolo..." maxlength="40" autocomplete="off" data-i18n-ph="ph_title">
+  <div class="single-logo-sep" role="separator"></div>
+  <h3 class="set-title single-logo-title" data-i18n="logo_label">Logo</h3>
+  <div class="single-logo">
+    <label class="lp-btn"><span data-i18n="upload_image">Carica immagine…</span><input type="file" id="logoFile" accept="image/*" hidden></label>
+    <input id="logoUrlIn" type="text" placeholder="…oppure URL dell'immagine" autocomplete="off" data-i18n-ph="ph_logo_url">
+    <input id="logoTxtIn" type="text" maxlength="4" placeholder="…o testo/emoji" autocomplete="off" data-i18n-ph="ph_logo_txt">
+    <button id="logoClear" class="lp-clear" title="Rimuovi logo" aria-label="Rimuovi logo" data-i18n-title="remove_logo" data-i18n-aria="remove_logo">✕</button>
+    <div class="lp-err" id="logoErr" hidden></div>
+  </div>
+  </div>
+  <!-- Coda di countdown: pannello che entra da destra in modalità Coda. Le righe
+       vengono generate via JS in #queueList; ogni item ha titolo proprio
+       (.q-title) e durata h:m:s (.q-time). -->
+  <div class="pane pane-queue" id="queue">
+    <div class="queue-head">
+      <span class="set-title" data-i18n="mode_queue">Coda</span>
+      <span class="q-count" id="qCount" hidden></span>
+    </div>
+    <div class="queue-list" id="queueList"></div>
+    <!-- Maschera unica: modifica il timer selezionato nell'elenco oppure ne prepara uno nuovo (+) -->
+    <div class="q-mask" id="qMask">
+      <div class="q-top">
+        <input type="text" class="q-title" id="mTitle" placeholder="Titolo del nuovo timer" maxlength="60" autocomplete="off" data-i18n-ph="ph_new_timer">
+        <button type="button" class="q-logo" id="mLogoBtn" title="Logo di questo timer" aria-expanded="false" data-i18n-title="timer_logo_title"></button>
+        <button type="button" class="q-logo q-color" id="mColorBtn" title="Colore dell'interfaccia per questo timer" aria-expanded="false" data-i18n-title="timer_color_title"><span class="q-color-dot"></span></button>
+        <button type="button" class="q-addbtn" id="mAddBtn" title="Aggiungi alla coda" aria-label="Aggiungi alla coda" data-i18n-title="add_to_queue" data-i18n-aria="add_to_queue">+</button>
+      </div>
+      <div class="q-time">
+        <input type="number" id="mH" min="0" max="99" value="0" data-i18n-aria="unit_h" aria-label="ore"><span data-i18n="unit_h">ore</span>
+        <input type="number" id="mM" min="0" max="59" value="5" data-i18n-aria="unit_m" aria-label="min"><span data-i18n="unit_m">min</span>
+        <input type="number" id="mS" min="0" max="59" value="0" data-i18n-aria="unit_s" aria-label="sec"><span data-i18n="unit_s">sec</span>
+      </div>
+      <div class="q-color-row" id="mColorRow"></div>
+      <div class="q-logo-row">
+        <span class="q-logo-prev" id="mLogoPrev"></span>
+        <input type="text" class="q-logo-in" id="mLogoIn" placeholder="URL immagine o testo/emoji" autocomplete="off" data-i18n-ph="ph_logo_url2">
+        <label class="q-logo-file"><span data-i18n="upload_short">Carica…</span><input type="file" id="mLogoFile" accept="image/*" hidden></label>
+        <button type="button" class="q-logo-clr" id="mLogoClr" title="Usa il logo generale" data-i18n-title="use_general_logo" data-i18n="remove">Rimuovi</button>
+      </div>
+    </div>
+  </div>
+  </div>
+  <div class="controls">
+    <button id="startBtn" class="main" data-i18n="start">Avvia</button>
+    <button id="fsBtn" class="ghost" title="Schermo intero (F)" aria-label="Schermo intero" data-i18n-title="fs_title" data-i18n-aria="fs_aria">⛶</button>
+    <button id="resetBtn" class="ghost" title="Azzera (R)" aria-label="Azzera" data-i18n-title="reset_title" data-i18n-aria="reset_aria">↺</button>
+    <button id="clearQueueBtn" class="ghost" type="button" title="Svuota la coda" aria-label="Svuota la coda" hidden data-i18n-title="clear_queue" data-i18n-aria="clear_queue"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v5M14 11v5"/></svg></button>
+  </div>
+  <p class="hints" data-i18n="hints">Spazio: avvia/pausa · R: azzera · F: schermo intero</p>
+  </section>
+  <aside class="settings">
+    <div class="set-group">
+      <span class="set-title" data-i18n="title_label">Titolo</span>
+      <div class="ts-size"><label><span data-i18n="font_label">Font:</span> <select id="fontSel" aria-label="Font del titolo" data-i18n-aria="font_aria"></select></label><div class="color-pick"><button type="button" id="colorBtn" aria-label="Colore del titolo" aria-haspopup="true" data-i18n-aria="tcolor_aria"><span class="color-chip" id="colorChip"></span></button><div class="color-pop" id="colorPop" hidden></div></div></div>
+      <label class="ts-size"><span data-i18n="size_label">Dimensione:</span> <span id="tsVal">100%</span><input type="range" id="titleSizeIn" min="100" max="300" step="5" value="100" aria-label="Dimensione del titolo" data-i18n-aria="tsize_aria"></label>
+    </div>
+    <div class="set-group">
+      <span class="set-title" data-i18n="sound_final">Suono finale</span>
+      <div class="sound-ctl">
+        <label for="soundSel" data-i18n="type_label">Tipo:</label>
+        <select id="soundSel" aria-label="Suono finale" data-i18n-aria="sound_final">
+          <option value="bip" data-i18n="snd_bip">Bip</option>
+          <option value="campanella" data-i18n="snd_campanella">Campanella</option>
+          <option value="ding" data-i18n="snd_ding">Ding</option>
+          <option value="sirena" data-i18n="snd_sirena">Sirena</option>
+          <option value="arpeggio" data-i18n="snd_arpeggio">Arpeggio</option>
+          <option value="custom" data-i18n="snd_custom">File audio…</option>
+        </select>
+        <label class="switch" for="soundOn"><input type="checkbox" id="soundOn" checked> <span data-i18n="active">Attivo</span></label>
+        <input type="file" id="soundFile" accept="audio/*" hidden>
+      </div>
+      <label class="switch" for="volIn"><span data-i18n="volume_label">Volume:</span> <span id="volVal">80%</span></label>
+      <input type="range" id="volIn" min="0" max="100" value="80" aria-label="Volume" data-i18n-aria="vol_aria">
+    </div>
+    <div class="set-group">
+      <span class="set-title" data-i18n="tick_every_sec">Bip ogni secondo</span>
+      <label class="switch"><input type="checkbox" id="tickBeep"> <span data-i18n="enabled">Abilitato</span></label>
+      <span class="tick-hint" data-i18n="last_seconds">Negli ultimi…</span>
+      <div class="tick-sec" role="radiogroup" aria-label="Secondi prima della fine" data-i18n-aria="tick_aria">
+        <label><input type="radio" name="tickSec" value="5" checked> <span data-i18n="sec_5">5 sec</span></label>
+        <label><input type="radio" name="tickSec" value="10"> <span data-i18n="sec_10">10 sec</span></label>
+        <label><input type="radio" name="tickSec" value="15"> <span data-i18n="sec_15">15 sec</span></label>
+        <label><input type="radio" name="tickSec" value="30"> <span data-i18n="sec_30">30 sec</span></label>
+      </div>
+    </div>
+    <div class="set-group logo-set">
+      <h3 class="set-title" data-i18n="logo_label">Logo</h3>
+      <label class="lp-size"><span data-i18n="logo_size_label">Dimensione</span><input type="range" id="logoSizeIn" min="56" max="450" step="2" value="168"></label>
+    </div>
+    <div class="set-group">
+      <span class="set-title" data-i18n="color_label">Colore</span>
+      <div class="themes" role="radiogroup" aria-label="Tema colore" data-i18n-aria="theme_aria">
+        <button type="button" class="theme-dot" data-theme="" style="--c1:#6366f1;--c2:#22d3ee" title="Indaco / ciano" data-i18n-title="th_indaco"></button>
+        <button type="button" class="theme-dot" data-theme="rosso" style="--c1:#ef4444;--c2:#f59e0b" title="Rosso / oro" data-i18n-title="th_rosso"></button>
+        <button type="button" class="theme-dot" data-theme="verde" style="--c1:#10b981;--c2:#a3e635" title="Verde / menta" data-i18n-title="th_verde"></button>
+        <button type="button" class="theme-dot" data-theme="rosa" style="--c1:#ec4899;--c2:#8b5cf6" title="Rosa / viola" data-i18n-title="th_rosa"></button>
+        <button type="button" class="theme-dot" data-theme="blu" style="--c1:#3b82f6;--c2:#0ea5e9" title="Blu / azzurro" data-i18n-title="th_blu"></button>
+        <button type="button" class="theme-dot" data-theme="ambra" style="--c1:#f59e0b;--c2:#fde047" title="Ambra / giallo" data-i18n-title="th_ambra"></button>
+        <button type="button" class="theme-dot" data-theme="viola" style="--c1:#8b5cf6;--c2:#c084fc" title="Viola / lilla" data-i18n-title="th_viola"></button>
+        <button type="button" class="theme-dot" data-theme="arancio" style="--c1:#f97316;--c2:#fdba74" title="Arancio / pesca" data-i18n-title="th_arancio"></button>
+        <button type="button" class="theme-dot" data-theme="turchese" style="--c1:#0d9488;--c2:#2dd4bf" title="Turchese / menta" data-i18n-title="th_turchese"></button>
+        <button type="button" class="theme-dot" data-theme="corallo" style="--c1:#f43f5e;--c2:#fb7185" title="Corallo / rosa acceso" data-i18n-title="th_corallo"></button>
+        <button type="button" class="theme-dot" data-theme="magenta" style="--c1:#c026d3;--c2:#e879f9" title="Magenta / fucsia" data-i18n-title="th_magenta"></button>
+        <button type="button" class="theme-dot" data-theme="argento" style="--c1:#94a3b8;--c2:#e2e8f0" title="Argento / bianco" data-i18n-title="th_argento"></button>
+      </div>
+    </div>
+    <div class="set-group">
+      <span class="set-title" data-i18n="import_export">Importa / Esporta</span>
+      <div class="io-btns">
+        <button type="button" id="exportBtn" class="io-btn" title="Salva tutte le configurazioni (coda, loghi, colori, audio personalizzato…) in un unico file" aria-label="Esporta configurazioni" data-i18n-title="export_title" data-i18n-aria="export_aria" data-i18n="export_btn">⬇ Esporta</button>
+        <button type="button" id="importBtn" class="io-btn" title="Ripristina tutte le configurazioni da un file esportato" aria-label="Importa configurazioni" data-i18n-title="import_title" data-i18n-aria="import_aria" data-i18n="import_btn">⬆ Importa</button>
+      </div>
+      <p class="io-msg" id="ioMsg" role="status" hidden></p>
+      <input type="file" id="importFile" accept=".json,application/json" hidden>
+    </div>
+    <div class="set-group">
+      <span class="set-title" data-i18n="languages_label">Lingue</span>
+      <div class="lang-flags" role="radiogroup" aria-label="Lingua" data-i18n-aria="lang_aria">
+        <button type="button" class="lang-flag" data-lang="it" title="Italiano"><svg viewBox="0 0 3 2" aria-hidden="true"><rect width="1" height="2" fill="#009246"/><rect x="1" width="1" height="2" fill="#fff"/><rect x="2" width="1" height="2" fill="#ce2b37"/></svg></button>
+        <button type="button" class="lang-flag" data-lang="en" title="English"><svg viewBox="0 0 60 36" aria-hidden="true"><rect width="60" height="36" fill="#012169"/><path d="M0,0 L60,36 M60,0 L0,36" stroke="#fff" stroke-width="8"/><path d="M0,0 L60,36 M60,0 L0,36" stroke="#C8102E" stroke-width="3"/><rect x="24" width="12" height="36" fill="#fff"/><rect y="12" width="60" height="12" fill="#fff"/><rect x="27" width="6" height="36" fill="#C8102E"/><rect y="15" width="60" height="6" fill="#C8102E"/></svg></button>
+        <button type="button" class="lang-flag" data-lang="fr" title="Français"><svg viewBox="0 0 3 2" aria-hidden="true"><rect width="1" height="2" fill="#0055A4"/><rect x="1" width="1" height="2" fill="#fff"/><rect x="2" width="1" height="2" fill="#EF4135"/></svg></button>
+        <button type="button" class="lang-flag" data-lang="es" title="Español"><svg viewBox="0 0 3 2" aria-hidden="true"><rect width="3" height="2" fill="#AA151B"/><rect y="0.5" width="3" height="1" fill="#F1BF00"/></svg></button>
+        <button type="button" class="lang-flag" data-lang="de" title="Deutsch"><svg viewBox="0 0 3 2" aria-hidden="true"><rect width="3" height="2" fill="#FFCE00"/><rect width="3" height="1.333" fill="#DD0000"/><rect width="3" height="0.667" fill="#000"/></svg></button>
+        <button type="button" class="lang-flag" data-lang="ru" title="Русский"><svg viewBox="0 0 3 2" aria-hidden="true"><rect width="3" height="2" fill="#D52B1E"/><rect width="3" height="1.333" fill="#0039A6"/><rect width="3" height="0.667" fill="#fff"/></svg></button>
+        <button type="button" class="lang-flag" data-lang="zh" title="中文"><svg viewBox="0 0 3 2" aria-hidden="true"><rect width="3" height="2" fill="#DE2910"/><polygon points="0.7,0.55 0.801,0.861 1.128,0.861 0.864,1.053 0.965,1.364 0.7,1.172 0.435,1.364 0.536,1.053 0.272,0.861 0.599,0.861" fill="#FFDE00"/></svg></button>
+      </div>
+    </div>
+  </aside>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const timeEl = $("time"),
+      startBtn = $("startBtn"), fsBtn = $("fsBtn"),
+      resetBtn = $("resetBtn"), titleInput = $("title"),
+      titleDisplay = $("titleDisplay"), titleSizeIn = $("titleSizeIn"), tsVal = $("tsVal"),
+      fontSel = $("fontSel"), colorBtn = $("colorBtn"), colorChip = $("colorChip"), colorPop = $("colorPop"),
+      hIn = $("h"), mIn = $("m"), sIn = $("s"),
+      presetsWrap = $("presets"),
+      endTimeEl = $("endTime"), progressFill = $("progressFill"),
+      soundSel = $("soundSel"), volIn = $("volIn"), soundFileIn = $("soundFile"),
+      soundOnChk = $("soundOn"), tickBeepChk = $("tickBeep"),
+      doneMsgEl = $("doneMsg"), volVal = $("volVal"),
+      ringFg = $("ringFg");
+
+// ---- Internazionalizzazione (i18n): 7 lingue, persistita in localStorage ----
+// Ogni chiave è un array di traduzioni nell'ordine di LANG_ORDER.
+const LANG_ORDER = ["it", "en", "fr", "es", "de", "ru", "zh"];
+const I18N_STRINGS = {
+  mode_aria: ["Modalità", "Mode", "Mode", "Modo", "Modus", "Режим", "模式"],
+  mode_single: ["Singolo", "Single", "Simple", "Individual", "Einzelner", "Один", "单个"],
+  mode_queue: ["Coda", "Queue", "File d'attente", "Cola", "Warteschlange", "Очередь", "队列"],
+  time_up: ["Tempo scaduto!", "Time's up!", "Temps écoulé !", "¡Tiempo agotado!", "Zeit abgelaufen!", "Время вышло!", "时间到！"],
+  p1: ["1 min", "1 min", "1 min", "1 min", "1 Min.", "1 мин", "1 分钟"],
+  p2: ["2 min", "2 min", "2 min", "2 min", "2 Min.", "2 мин", "2 分钟"],
+  p3: ["3 min", "3 min", "3 min", "3 min", "3 Min.", "3 мин", "3 分钟"],
+  p5: ["5 min", "5 min", "5 min", "5 min", "5 Min.", "5 мин", "5 分钟"],
+  p10: ["10 min", "10 min", "10 min", "10 min", "10 Min.", "10 мин", "10 分钟"],
+  p15: ["15 min", "15 min", "15 min", "15 min", "15 Min.", "15 мин", "15 分钟"],
+  aria_h: ["Ore", "Hours", "Heures", "Horas", "Stunden", "Часы", "小时"],
+  aria_m: ["Minuti", "Minutes", "Minutes", "Minutos", "Minuten", "Минуты", "分钟"],
+  aria_s: ["Secondi", "Seconds", "Secondes", "Segundos", "Sekunden", "Секунды", "秒"],
+  unit_h: ["ore", "h", "h", "h", "h", "ч", "时"],
+  unit_m: ["min", "min", "min", "min", "Min", "мин", "分"],
+  unit_s: ["sec", "s", "s", "s", "Sek", "сек", "秒"],
+  cp_save: ["Salva questo tempo come preset", "Save this time as a preset", "Enregistrer ce temps comme préréglage", "Guardar este tiempo como preset", "Diese Zeit als Voreinstellung speichern", "Сохранить это время как пресет", "将此时间保存为预设"],
+  save_short: ["💾 Salva", "💾 Save", "💾 Enregistrer", "💾 Guardar", "💾 Speichern", "💾 Сохранить", "💾 保存"],
+  title_label: ["Titolo", "Title", "Titre", "Título", "Titel", "Заголовок", "标题"],
+  ph_title: ["Scrivi qui il titolo...", "Type the title here...", "Écrivez le titre ici...", "Escribe el título aquí...", "Titel hier eingeben...", "Введите заголовок...", "在此输入标题…"],
+  logo_label: ["Logo", "Logo", "Logo", "Logotipo", "Logo", "Логотип", "标志"],
+  upload_image: ["Carica immagine…", "Upload image…", "Charger une image…", "Subir imagen…", "Bild hochladen…", "Загрузить изображение…", "上传图片…"],
+  ph_logo_url: ["…oppure URL dell'immagine", "…or image URL", "…ou URL de l'image", "…o URL de la imagen", "…oder Bild-URL", "…или URL изображения", "…或图片 URL"],
+  ph_logo_txt: ["…o testo/emoji", "…or text/emoji", "…ou texte/emoji", "…o texto/emoji", "…oder Text/Emoji", "…или текст/эмодзи", "…或文字/表情"],
+  remove_logo: ["Rimuovi logo", "Remove logo", "Retirer le logo", "Quitar logotipo", "Logo entfernen", "Удалить логотип", "移除标志"],
+  ph_new_timer: ["Titolo del nuovo timer", "New timer title", "Titre du nouveau minuteur", "Título del nuevo temporizador", "Titel des neuen Timers", "Заголовок нового таймера", "新计时器标题"],
+  timer_logo_title: ["Logo di questo timer", "Logo for this timer", "Logo de ce minuteur", "Logotipo de este temporizador", "Logo für diesen Timer", "Логотип этого таймера", "此计时器的标志"],
+  timer_color_title: ["Colore dell'interfaccia per questo timer", "Interface color for this timer", "Couleur de l'interface pour ce minuteur", "Color de la interfaz para este temporizador", "Farbe der Oberfläche für diesen Timer", "Цвет интерфейса для этого таймера", "此计时器的界面颜色"],
+  add_to_queue: ["Aggiungi alla coda", "Add to queue", "Ajouter à la file", "Añadir a la cola", "Zur Warteschlange hinzufügen", "Добавить в очередь", "加入队列"],
+  ph_logo_url2: ["URL immagine o testo/emoji", "Image URL or text/emoji", "URL d'image ou texte/emoji", "URL de imagen o texto/emoji", "Bild-URL oder Text/Emoji", "URL изображения или текст/эмодзи", "图片 URL 或文字/表情"],
+  upload_short: ["Carica…", "Upload…", "Charger…", "Subir…", "Hochladen…", "Загрузить…", "上传…"],
+  use_general_logo: ["Usa il logo generale", "Use the general logo", "Utiliser le logo général", "Usar el logotipo general", "Das allgemeine Logo verwenden", "Использовать общий логотип", "使用通用标志"],
+  remove: ["Rimuovi", "Remove", "Retirer", "Quitar", "Entfernen", "Удалить", "移除"],
+  start: ["Avvia", "Start", "Démarrer", "Iniciar", "Starten", "Старт", "开始"],
+  fs_title: ["Schermo intero (F)", "Fullscreen (F)", "Plein écran (F)", "Pantalla completa (F)", "Vollbild (F)", "Во весь экран (F)", "全屏（F）"],
+  fs_aria: ["Schermo intero", "Fullscreen", "Plein écran", "Pantalla completa", "Vollbild", "Во весь экран", "全屏"],
+  reset_title: ["Azzera (R)", "Reset (R)", "Réinitialiser (R)", "Reiniciar (R)", "Zurücksetzen (R)", "Сброс (R)", "重置（R）"],
+  reset_aria: ["Azzera", "Reset", "Réinitialiser", "Reiniciar", "Zurücksetzen", "Сброс", "重置"],
+  clear_queue: ["Svuota la coda", "Clear queue", "Vider la file", "Vaciar la cola", "Warteschlange leeren", "Очистить очередь", "清空队列"],
+  hints: ["Spazio: avvia/pausa · R: azzera · F: schermo intero", "Space: start/pause · R: reset · F: fullscreen", "Espace : démarrer/pause · R : réinitialiser · F : plein écran", "Espacio: iniciar/pausa · R: reiniciar · F: pantalla completa", "Leertaste: Start/Pause · R: Zurücksetzen · F: Vollbild", "Пробел: старт/пауза · R: сброс · F: во весь экран", "空格：开始/暂停 · R：重置 · F：全屏"],
+  font_label: ["Font:", "Font:", "Police :", "Fuente:", "Schriftart:", "Шрифт:", "字体："],
+  font_aria: ["Font del titolo", "Title font", "Police du titre", "Fuente del título", "Titelschriftart", "Шрифт заголовка", "标题字体"],
+  tcolor_aria: ["Colore del titolo", "Title color", "Couleur du titre", "Color del título", "Titelfarbe", "Цвет заголовка", "标题颜色"],
+  size_label: ["Dimensione:", "Size:", "Taille :", "Tamaño:", "Größe:", "Размер:", "大小："],
+  tsize_aria: ["Dimensione del titolo", "Title size", "Taille du titre", "Tamaño del título", "Titelgröße", "Размер заголовка", "标题大小"],
+  sound_final: ["Suono finale", "End sound", "Son final", "Sonido final", "Endsound", "Звук в конце", "结束声音"],
+  type_label: ["Tipo:", "Type:", "Type :", "Tipo:", "Typ:", "Тип:", "类型："],
+  snd_bip: ["Bip", "Beep", "Bipe", "Bip", "Signalton", "Сигнал", "哔声"],
+  snd_campanella: ["Campanella", "Bell", "Cloche", "Campana", "Glocke", "Колокольчик", "铃声"],
+  snd_ding: ["Ding", "Ding", "Ding", "Ding", "Ding", "Динь", "叮声"],
+  snd_sirena: ["Sirena", "Siren", "Sirène", "Sirena", "Sirene", "Сирена", "警报声"],
+  snd_arpeggio: ["Arpeggio", "Arpeggio", "Arpège", "Arpegio", "Arpeggio", "Арпеджио", "琶音"],
+  snd_custom: ["File audio…", "Audio file…", "Fichier audio…", "Archivo de audio…", "Audiodatei…", "Аудиофайл…", "音频文件…"],
+  active: ["Attivo", "Active", "Actif", "Activo", "Aktiv", "Включено", "启用"],
+  volume_label: ["Volume:", "Volume:", "Volume :", "Volumen:", "Lautstärke:", "Громкость:", "音量："],
+  vol_aria: ["Volume", "Volume", "Volume", "Volumen", "Lautstärke", "Громкость", "音量"],
+  tick_every_sec: ["Bip ogni secondo", "Beep every second", "Bipe chaque seconde", "Bip cada segundo", "Signalton jede Sekunde", "Сигнал каждую секунду", "每秒哔声"],
+  enabled: ["Abilitato", "Enabled", "Activé", "Habilitado", "Aktiviert", "Включено", "已启用"],
+  last_seconds: ["Negli ultimi…", "In the last…", "Dans les dernières…", "En los últimos…", "In den letzten…", "В последние…", "在最后…"],
+  tick_aria: ["Secondi prima della fine", "Seconds before the end", "Secondes avant la fin", "Segundos antes del final", "Sekunden vor dem Ende", "Секунд до конца", "结束前的秒数"],
+  sec_5: ["5 sec", "5 s", "5 s", "5 s", "5 Sek", "5 сек", "5 秒"],
+  sec_10: ["10 sec", "10 s", "10 s", "10 s", "10 Sek", "10 сек", "10 秒"],
+  sec_15: ["15 sec", "15 s", "15 s", "15 s", "15 Sek", "15 сек", "15 秒"],
+  sec_30: ["30 sec", "30 s", "30 s", "30 s", "30 Sek", "30 сек", "30 秒"],
+  logo_size_label: ["Dimensione", "Size", "Taille", "Tamaño", "Größe", "Размер", "大小"],
+  color_label: ["Colore", "Color", "Couleur", "Color", "Farbe", "Цвет", "颜色"],
+  theme_aria: ["Tema colore", "Color theme", "Thème de couleur", "Tema de color", "Farbthema", "Цветовая тема", "颜色主题"],
+  th_indaco: ["Indaco / ciano", "Indigo / cyan", "Indigo / cyan", "Índigo / cian", "Indigo / Cyan", "Индиго / циан", "靛蓝/青色"],
+  th_rosso: ["Rosso / oro", "Red / gold", "Rouge / or", "Rojo / oro", "Rot / Gold", "Красный / золотой", "红色/金色"],
+  th_verde: ["Verde / menta", "Green / mint", "Vert / menthe", "Verde / menta", "Grün / Minze", "Зелёный / мята", "绿色/薄荷"],
+  th_rosa: ["Rosa / viola", "Pink / violet", "Rose / violet", "Rosa / violeta", "Rosa / Violett", "Розовый / фиолетовый", "粉色/紫色"],
+  th_blu: ["Blu / azzurro", "Blue / sky blue", "Bleu / bleu ciel", "Azul / celeste", "Blau / Himmelblau", "Синий / голубой", "蓝色/天蓝"],
+  th_ambra: ["Ambra / giallo", "Amber / yellow", "Ambre / jaune", "Ámbar / amarillo", "Bernstein / Gelb", "Янтарь / жёлтый", "琥珀/黄色"],
+  th_viola: ["Viola / lilla", "Violet / lilac", "Violet / lilas", "Violeta / lila", "Violett / Lila", "Фиолетовый / сиреневый", "紫色/丁香紫"],
+  th_arancio: ["Arancio / pesca", "Orange / peach", "Orange / pêche", "Naranja / durazno", "Orange / Pfirsich", "Оранжевый / персиковый", "橙色/桃色"],
+  th_turchese: ["Turchese / menta", "Teal / mint", "Turquoise / menthe", "Turquesa / menta", "Türkis / Minze", "Бирюзовый / мята", "青绿/薄荷"],
+  th_corallo: ["Corallo / rosa acceso", "Coral / hot pink", "Corail / rose vif", "Coral / rosa intenso", "Koralle / Leuchtendrosa", "Коралловый / ярко-розовый", "珊瑚/艳粉"],
+  th_magenta: ["Magenta / fucsia", "Magenta / fuchsia", "Magenta / fuchsia", "Magenta / fucsia", "Magenta / Fuchsia", "Магента / фуксия", "品红/洋红"],
+  th_argento: ["Argento / bianco", "Silver / white", "Argent / blanc", "Plata / blanco", "Silber / Weiß", "Серебро / белый", "银色/白色"],
+  import_export: ["Importa / Esporta", "Import / Export", "Importer / Exporter", "Importar / Exportar", "Importieren / Exportieren", "Импорт / Экспорт", "导入 / 导出"],
+  export_title: ["Salva tutte le configurazioni (coda, loghi, colori, audio personalizzato…) in un unico file", "Save all settings (queue, logos, colors, custom audio…) to a single file", "Enregistrer toutes les configurations (file, logos, couleurs, audio personnalisé…) dans un seul fichier", "Guardar todas las configuraciones (cola, logotipos, colores, audio personalizado…) en un único archivo", "Alle Einstellungen (Warteschlange, Logos, Farben, benutzerdefiniertes Audio…) in einer einzigen Datei speichern", "Сохранить все настройки (очередь, логотипы, цвета, пользовательский звук…) в один файл", "将所有设置（队列、标志、颜色、自定义音频…）保存到一个文件"],
+  export_aria: ["Esporta configurazioni", "Export settings", "Exporter les configurations", "Exportar configuraciones", "Einstellungen exportieren", "Экспорт настроек", "导出设置"],
+  export_btn: ["⬇ Esporta", "⬇ Export", "⬇ Exporter", "⬇ Exportar", "⬇ Exportieren", "⬇ Экспорт", "⬇ 导出"],
+  import_title: ["Ripristina tutte le configurazioni da un file esportato", "Restore all settings from an exported file", "Restaurer toutes les configurations depuis un fichier exporté", "Restablecer todas las configuraciones desde un archivo exportado", "Alle Einstellungen aus einer exportierten Datei wiederherstellen", "Восстановить все настройки из экспортированного файла", "从导出的文件恢复所有设置"],
+  import_aria: ["Importa configurazioni", "Import settings", "Importer les configurations", "Importar configuraciones", "Einstellungen importieren", "Импорт настроек", "导入设置"],
+  import_btn: ["⬆ Importa", "⬆ Import", "⬆ Importer", "⬆ Importar", "⬆ Importieren", "⬆ Импорт", "⬆ 导入"],
+  languages_label: ["Lingue", "Languages", "Langues", "Idiomas", "Sprachen", "Языки", "语言"],
+  lang_aria: ["Lingua", "Language", "Langue", "Idioma", "Sprache", "Язык", "语言"],
+  app_title: ["Countdown", "Countdown", "Compte à rebours", "Cuenta atrás", "Countdown", "Обратный отсчёт", "倒计时"],
+  ends_at: ["Finisce alle ", "Ends at ", "Se termine à ", "Termina a las ", "Ende um ", "Закончится в ", "结束于 "],
+  pause: ["Pausa", "Pause", "Pause", "Pausa", "Pause", "Пауза", "暂停"],
+  start_queue: ["Avvio Coda", "Start Queue", "Lancer la file", "Iniciar cola", "Warteschlange starten", "Запустить очередь", "启动队列"],
+  cp_apply: ["Applica questo tempo", "Apply this time", "Appliquer ce temps", "Aplicar este tiempo", "Diese Zeit anwenden", "Применить это время", "应用此时间"],
+  cp_delete: ["Elimina questo preset", "Delete this preset", "Supprimer ce préréglage", "Eliminar este preset", "Diese Voreinstellung löschen", "Удалить этот пресет", "删除此预设"],
+  cp_empty_slot: ["Slot vuoto — imposta un tempo e premi 💾 Salva", "Empty slot — set a time and press 💾 Save", "Emplacement vide — définissez un temps et appuyez sur 💾 Enregistrer", "Slot vacío — configura un tiempo y pulsa 💾 Guardar", "Leerer Slot — Zeit einstellen und 💾 Speichern drücken", "Пустой слот — задайте время и нажмите 💾 Сохранить", "空槽位 — 设置时间后按 💾 保存"],
+  cp_full: ["Tutti e 4 gli slot sono pieni: elimina prima un preset", "All 4 slots are full: delete a preset first", "Les 4 emplacements sont pleins : supprimez d'abord un préréglage", "Los 4 slots están llenos: elimina primero un preset", "Alle 4 Slots sind belegt: lösche zuerst eine Voreinstellung", "Все 4 слота заняты: сначала удалите пресет", "4 个槽位已满：请先删除一个预设"],
+  cp_zero: ["Imposta prima un tempo maggiore di zero", "Set a time greater than zero first", "Définissez d'abord un temps supérieur à zéro", "Configura primero un tiempo mayor que cero", "Zuerst eine Zeit größer als null einstellen", "Сначала задайте время больше нуля", "请先设置大于零的时间"],
+  no_title: ["Senza titolo", "Untitled", "Sans titre", "Sin título", "Ohne Titel", "Без названия", "无标题"],
+  drag_reorder: ["Trascina per riordinare", "Drag to reorder", "Glisser pour réorganiser", "Arrastra para reordenar", "Ziehen zum Neuordnen", "Перетащите для изменения порядка", "拖拽以重新排序"],
+  remove_from_queue: ["Rimuovi dalla coda", "Remove from queue", "Retirer de la file", "Quitar de la cola", "Aus der Warteschlange entfernen", "Удалить из очереди", "从队列中移除"],
+  skip_to_timer: ["Salta a questo timer", "Skip to this timer", "Aller à ce minuteur", "Saltar a este temporizador", "Zu diesem Timer springen", "Перейти к этому таймеру", "跳到此计时器"],
+  img_loaded: ["Immagine caricata", "Image loaded", "Image chargée", "Imagen cargada", "Bild geladen", "Изображение загружено", "已加载图片"],
+  url_unreachable: ["URL non raggiungibile", "Unreachable URL", "URL inaccessible", "URL no accesible", "URL nicht erreichbar", "URL недоступен", "无法访问的 URL"],
+  url_unreachable_check: ["URL non raggiungibile: controlla l'indirizzo", "Unreachable URL: check the address", "URL inaccessible : vérifiez l'adresse", "URL no accesible: comprueba la dirección", "URL nicht erreichbar: Adresse prüfen", "URL недоступен: проверьте адрес", "无法访问的 URL：请检查地址"],
+  ph_timer_n: ["Titolo del timer {n}", "Timer {n} title", "Titre du minuteur {n}", "Título del temporizador {n}", "Titel des Timers {n}", "Заголовок таймера {n}", "计时器 {n} 的标题"],
+  alert_min_one: ["Aggiungi almeno un timer con durata maggiore di zero", "Add at least one timer with a duration greater than zero", "Ajoutez au moins un minuteur avec une durée supérieure à zéro", "Añade al menos un temporizador con una duración mayor que cero", "Füge mindestens einen Timer mit einer Dauer größer als null hinzu", "Добавьте хотя бы один таймер с длительностью больше нуля", "请至少添加一个时长大于零的计时器"],
+  alert_img_removed: ["Immagine non caricabile: logo rimosso.", "Image could not be loaded: logo removed.", "Image impossible à charger : logo retiré.", "No se pudo cargar la imagen: logotipo eliminado.", "Bild konnte nicht geladen werden: Logo entfernt.", "Не удалось загрузить изображение: логотип удалён.", "无法加载图片：标志已移除。"],
+  alert_select_image: ["Seleziona un file immagine", "Select an image file", "Sélectionnez un fichier image", "Selecciona un archivo de imagen", "Wähle eine Bilddatei aus", "Выберите файл изображения", "请选择图片文件"],
+  alert_read_img: ["Impossibile leggere l'immagine", "Could not read the image", "Impossible de lire l'image", "No se pudo leer la imagen", "Bild konnte nicht gelesen werden", "Не удалось прочитать изображение", "无法读取图片"],
+  alert_read_file: ["Impossibile leggere il file", "Could not read the file", "Impossible de lire le fichier", "No se pudo leer el archivo", "Datei konnte nicht gelesen werden", "Не удалось прочитать файл", "无法读取文件"],
+  io_exported: ["Configurazione esportata ({q}).", "Configuration exported ({q}).", "Configuration exportée ({q}).", "Configuración exportada ({q}).", "Konfiguration exportiert ({q}).", "Настройки экспортированы ({q}).", "设置已导出（{q}）。"],
+  io_export_fail: ["Esportazione non riuscita.", "Export failed.", "Échec de l'exportation.", "Error al exportar.", "Export fehlgeschlagen.", "Экспорт не выполнен.", "导出失败。"],
+  io_invalid_file: ["File non valido: nessuna modifica applicata.", "Invalid file: no changes applied.", "Fichier invalide : aucune modification appliquée.", "Archivo no válido: no se aplicaron cambios.", "Ungültige Datei: keine Änderungen angewendet.", "Недействительный файл: изменения не применены.", "文件无效：未应用任何修改。"],
+  io_imported: ["Configurazione importata ({q}).", "Configuration imported ({q}).", "Configuration importée ({q}).", "Configuración importada ({q}).", "Konfiguration importiert ({q}).", "Настройки импортированы ({q}).", "设置已导入（{q}）。"],
+  io_import_fail: ["Import non completato: ricarica la pagina.", "Import not completed: reload the page.", "Import non terminé : rechargez la page.", "Importación no completada: recarga la página.", "Import nicht abgeschlossen: Seite neu laden.", "Импорт не завершён: перезагрузите страницу.", "导入未完成：请重新加载页面。"],
+  io_read_fail: ["Impossibile leggere il file.", "Could not read the file.", "Impossible de lire le fichier.", "No se pudo leer el archivo.", "Datei konnte nicht gelesen werden.", "Не удалось прочитать файл.", "无法读取文件。"],
+  alert_stop_first: ["Ferma il countdown prima di importare.", "Stop the countdown before importing.", "Arrêtez le compte à rebours avant d'importer.", "Detén la cuenta atrás antes de importar.", "Bevor du importierst, den Countdown stoppen.", "Остановите отсчёт перед импортом.", "导入前请先停止倒计时。"],
+  font_brush: ["Brush Script (corsivo)", "Brush Script (script)", "Brush Script (calligraphié)", "Brush Script (caligráfico)", "Brush Script (Kursiv)", "Brush Script (рукописный)", "Brush Script（手写体）"],
+  font_hand: ["Lucida Handwriting (corsivo)", "Lucida Handwriting (script)", "Lucida Handwriting (calligraphié)", "Lucida Handwriting (caligráfico)", "Lucida Handwriting (Kursiv)", "Lucida Handwriting (рукописный)", "Lucida Handwriting（手写体）"],
+};
+const I18N = {};
+for (const l of LANG_ORDER) {
+  const i = LANG_ORDER.indexOf(l);
+  I18N[l] = {};
+  for (const key in I18N_STRINGS) I18N[l][key] = I18N_STRINGS[key][i];
+}
+let curLang = "it";
+try {
+  const savedLang = localStorage.getItem("cd_lang");
+  if (savedLang && I18N[savedLang]) curLang = savedLang;
+} catch (err) { /* storage non disponibile */ }
+// Traduzione di una chiave con sostituzione opzionale di variabili ({n}, {q}).
+function tr(key, vars) {
+  let s = (I18N[curLang] && I18N[curLang][key]) || I18N.it[key];
+  if (vars) for (const v in vars) s = s.split("{" + v + "}").join(vars[v]);
+  return s;
+}
+// Plurale di "timer" per lingua (il russo ha tre forme).
+function timerNoun(n) {
+  switch (curLang) {
+    case "en": return n + (n === 1 ? " timer" : " timers");
+    case "fr": return n + (n === 1 ? " minuteur" : " minuteurs");
+    case "es": return n + (n === 1 ? " temporizador" : " temporizadores");
+    case "de": return n + " Timer";
+    case "ru": {
+      const m10 = n % 10, m100 = n % 100;
+      const suf = (m10 === 1 && m100 !== 11) ? " таймер"
+        : (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) ? " таймера" : " таймеров";
+      return n + suf;
+    }
+    case "zh": return n + " 个计时器";
+    default: return n + " timer";
+  }
+}
+function timersInQueue(n) {
+  const tail = { it: " in coda", en: " in queue", fr: " en file", es: " en cola", de: " in der Warteschlange", ru: " в очереди", zh: "在队列中" }[curLang] || " in coda";
+  return timerNoun(n) + tail;
+}
+const langFlags = Array.from(document.querySelectorAll(".lang-flag"));
+// Ricalcola le voci del font: due etichette hanno un'annotazione tradotta.
+const FONT_LABEL_KEYS = { "Brush Script (corsivo)": "font_brush", "Lucida Handwriting (corsivo)": "font_hand" };
+function buildFontOptions() {
+  const sel = fontSel.value;
+  fontSel.textContent = "";
+  for (const [label, stack] of SYSTEM_FONTS) {
+    const o = document.createElement("option");
+    o.value = stack;
+    o.textContent = FONT_LABEL_KEYS[label] ? tr(FONT_LABEL_KEYS[label]) : label;
+    fontSel.appendChild(o);
+  }
+  if (Array.from(fontSel.options).some((o) => o.value === sel)) fontSel.value = sel;
+}
+// Applica la lingua corrente a TUTTO: attributi data-i18n*, titolo pagina,
+// bandierina attiva e i contenuti dinamici generati in JS.
+function applyI18n() {
+  const dict = I18N[curLang];
+  document.documentElement.lang = curLang;
+  document.documentElement.dataset.lang = curLang;
+  document.title = dict.app_title;
+  for (const el of document.querySelectorAll("[data-i18n]")) {
+    const key = el.getAttribute("data-i18n");
+    if (dict[key] != null) el.textContent = dict[key];
+  }
+  for (const el of document.querySelectorAll("[data-i18n-ph]")) {
+    const key = el.getAttribute("data-i18n-ph");
+    if (dict[key] != null) el.placeholder = dict[key];
+  }
+  for (const el of document.querySelectorAll("[data-i18n-title]")) {
+    const key = el.getAttribute("data-i18n-title");
+    if (dict[key] != null) el.title = dict[key];
+  }
+  for (const el of document.querySelectorAll("[data-i18n-aria]")) {
+    const key = el.getAttribute("data-i18n-aria");
+    if (dict[key] != null) el.setAttribute("aria-label", dict[key]);
+  }
+  for (const f of langFlags) f.classList.toggle("active", f.dataset.lang === curLang);
+  buildFontOptions();
+  renderCustomPresets();
+  updateSaveBtn();
+  syncQueueUI();
+  refreshMaskLogoUI();
+  updateEndTime();
+}
+function setLang(l) {
+  if (!I18N[l] || l === curLang) return;
+  curLang = l;
+  try { localStorage.setItem("cd_lang", l); } catch (err) { console.warn("Lingua non salvata:", err); }
+  applyI18n();
+}
+for (const f of langFlags) f.addEventListener("click", () => setLang(f.dataset.lang));
+
+const state = { total: 15 * 60000, remaining: 15 * 60000, endTime: 0, running: false };
+let rafId = 0;
+let intervalId = 0;
+let audioCtx = null;
+let customSoundUrl = null; // data URL del file audio caricato dall'utente
+
+// Preferenze suono persistenti (localStorage)
+try {
+  const savedSound = localStorage.getItem("cd_sound");
+  if (savedSound) soundSel.value = savedSound;
+  const savedVol = parseInt(localStorage.getItem("cd_vol"), 10);
+  if (!Number.isNaN(savedVol)) volIn.value = String(savedVol);
+  soundOnChk.checked = localStorage.getItem("cd_sound_on") !== "0";
+} catch (err) {
+  console.warn("Preferenze non leggibili:", err);
+}
+soundOnChk.addEventListener("change", () => {
+  try { localStorage.setItem("cd_sound_on", soundOnChk.checked ? "1" : "0"); } catch (err) { /* storage non disponibile */ }
+});
+tickBeepChk.checked = (() => { try { return localStorage.getItem("cd_tick_beep") === "1"; } catch (e) { return false; } })();
+tickBeepChk.addEventListener("change", () => {
+  try { localStorage.setItem("cd_tick_beep", tickBeepChk.checked ? "1" : "0"); } catch (err) { /* storage non disponibile */ }
+});
+const tickSecRadios = document.querySelectorAll('input[name="tickSec"]');
+let tickSecVal = 5;
+tickSecRadios.forEach(r => {
+  if (r.checked) tickSecVal = parseInt(r.value, 10);
+  r.addEventListener("change", () => {
+    tickSecVal = parseInt(r.value, 10);
+    try { localStorage.setItem("cd_tick_sec", r.value); } catch (err) { /* storage non disponibile */ }
+  });
+});
+try {
+  const savedTickSec = localStorage.getItem("cd_tick_sec");
+  if (savedTickSec) {
+    const r = document.querySelector('input[name="tickSec"][value="' + savedTickSec + '"]');
+    if (r) { r.checked = true; tickSecVal = parseInt(r.value, 10); }
+  }
+} catch (err) { /* storage non disponibile */ }
+volVal.textContent = volIn.value + "%";
+// Titolo: anteprima live in alto a schermo ad ogni tasto + slider 100-300%
+titleInput.addEventListener("input", () => { titleDisplay.textContent = titleInput.value; });
+function applyTitleScale() {
+  const v = parseInt(titleSizeIn.value, 10);
+  tsVal.textContent = v + "%";
+  document.documentElement.style.setProperty("--tscale", String(v / 100));
+}
+titleSizeIn.addEventListener("input", applyTitleScale);
+applyTitleScale();
+// Font del titolo: solo font di sistema cross-platform (Windows/macOS),
+// ognuno con la propria catena di fallback nel caso mancasse sul sistema.
+const SYSTEM_FONTS = [
+  ["Segoe UI", '"Segoe UI", system-ui, sans-serif'],
+  ["Arial", "Arial, sans-serif"],
+  ["Verdana", "Verdana, sans-serif"],
+  ["Tahoma", "Tahoma, sans-serif"],
+  ["Trebuchet MS", '"Trebuchet MS", sans-serif'],
+  ["Georgia", "Georgia, serif"],
+  ["Times New Roman", '"Times New Roman", serif'],
+  ["Garamond", "Garamond, serif"],
+  ["Palatino", '"Palatino Linotype", Palatino, "Book Antiqua", serif'],
+  ["Courier New", '"Courier New", monospace'],
+  ["Consolas", "Consolas, Menlo, Monaco, monospace"],
+  ["Impact", "Impact, sans-serif"],
+  ["Comic Sans MS", '"Comic Sans MS", cursive'],
+  ["Brush Script (corsivo)", '"Brush Script MT", cursive'],
+  ["Lucida Handwriting (corsivo)", '"Lucida Handwriting", cursive']
+];
+buildFontOptions();
+function applyTitleFont() {
+  // Il titolo già scritto cambia in tempo reale: .title-display legge --tfont
+  document.documentElement.style.setProperty("--tfont", fontSel.value);
+}
+try {
+  const savedFont = localStorage.getItem("cd_font");
+  if (savedFont && SYSTEM_FONTS.some(([, s]) => s === savedFont)) fontSel.value = savedFont;
+} catch (err) { /* storage non disponibile */ }
+fontSel.addEventListener("change", () => {
+  applyTitleFont();
+  try { localStorage.setItem("cd_font", fontSel.value); } catch (err) { /* storage non disponibile */ }
+});
+applyTitleFont();
+// Colore del titolo: tendina custom — i browser ignorano gli stili sui <option>
+// nativi e le immagini inline dentro le voci falliscono su alcuni, quindi si usa
+// un bottone con campionario + popup di riquadri colorati: stile identico al resto.
+const TITLE_COLORS = ["#ffffff", "#ff5252", "#ff9800", "#ffd740", "#69f0ae", "#40c4ff", "#7c4dff", "#ff4081", "#b0bec5", "#1de9b6", "#b2ff59", "#ea80fc", "#ff8a80", "#ffe57f", "#80d8ff"];
+let colorOpen = false;
+TITLE_COLORS.forEach(c => {
+  const s = document.createElement("button");
+  s.type = "button";
+  s.className = "color-swatch";
+  s.style.background = c;
+  s.dataset.c = c;
+  s.setAttribute("aria-label", c);
+  s.addEventListener("click", () => { setColor(c); closeColorPop(); });
+  colorPop.appendChild(s);
+});
+function setColor(c) {
+  // Il titolo già scritto cambia colore in tempo reale: .title-display legge --tcolor
+  document.documentElement.style.setProperty("--tcolor", c);
+  colorChip.style.background = c;
+  for (const s of colorPop.children) s.classList.toggle("sel", s.dataset.c === c);
+  try { localStorage.setItem("cd_color", c); } catch (err) { /* storage non disponibile */ }
+}
+function closeColorPop() { colorOpen = false; colorPop.hidden = true; }
+colorBtn.addEventListener("click", e => {
+  e.stopPropagation();
+  colorOpen = !colorOpen;
+  colorPop.hidden = !colorOpen;
+});
+document.addEventListener("click", () => { if (colorOpen) closeColorPop(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && colorOpen) closeColorPop(); });
+try {
+  const savedColor = localStorage.getItem("cd_color");
+  setColor(savedColor && TITLE_COLORS.includes(savedColor) ? savedColor : TITLE_COLORS[0]);
+} catch (err) { setColor(TITLE_COLORS[0]); }
+soundSel.addEventListener("change", () => {
+  try { localStorage.setItem("cd_sound", soundSel.value); } catch (err) { /* storage non disponibile */ }
+  if (soundSel.value === "custom") soundFileIn.click();
+  else previewSound();
+});
+volIn.addEventListener("input", () => {
+  volVal.textContent = volIn.value + "%";
+  try { localStorage.setItem("cd_vol", volIn.value); } catch (err) { /* storage non disponibile */ }
+});
+soundFileIn.addEventListener("change", () => {
+  const f = soundFileIn.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    customSoundUrl = reader.result;
+    soundSel.value = "custom";
+    try { localStorage.setItem("cd_sound", "custom"); } catch (err) { /* storage non disponibile */ }
+    previewSound();
+  };
+  reader.onerror = () => console.warn("Lettura del file audio fallita:", reader.error);
+  reader.readAsDataURL(f);
+});
+
+function fmt(ms) {
+  const t = Math.max(0, Math.ceil(ms / 1000));
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  const p = (n) => String(n).padStart(2, "0");
+  return h > 0 ? p(h) + ":" + p(m) + ":" + p(s) : p(m) + ":" + p(s);
+}
+
+// Barra di avanzamento che cambia colore in base al tempo residuo:
+// gradiente normale → giallo sotto il 25% → rosso sotto il 10%
+// Temi di colore (suggerimento 16): [accento primario, accento secondario] per tema.
+// Il tema attivo è già applicato su <html data-theme> dallo script inline in <head>,
+// prima del primo paint: qui lo leggiamo solo per i colori dell'anello SVG.
+const THEMES = {
+  "": ["#6366f1", "#22d3ee"],    // indaco / ciano (default)
+  rosso: ["#ef4444", "#f59e0b"], // rosso / oro
+  verde: ["#10b981", "#a3e635"], // verde / menta
+  rosa: ["#ec4899", "#8b5cf6"],  // rosa / viola
+  blu: ["#3b82f6", "#0ea5e9"],   // blu / azzurro
+  ambra: ["#f59e0b", "#fde047"], // ambra / giallo
+  viola: ["#8b5cf6", "#c084fc"], // viola / lilla
+  arancio: ["#f97316", "#fdba74"], // arancio / pesca
+  turchese: ["#0d9488", "#2dd4bf"], // turchese / menta
+  corallo: ["#f43f5e", "#fb7185"], // corallo / rosa acceso
+  magenta: ["#c026d3", "#e879f9"], // magenta / fucsia
+  argento: ["#94a3b8", "#e2e8f0"] // argento / bianco
+};
+let currentTheme = "";
+try {
+  const t = localStorage.getItem("cd_theme");
+  if (t && THEMES[t]) currentTheme = t;
+} catch (err) { /* localStorage non disponibile: resta il tema default */ }
+let [ACCENT1, ACCENT2] = THEMES[currentTheme];
+let ringColorState = -1; // 0 normale, 1 giallo, 2 rosso: evita scritture DOM inutili
+let warnState = false;   // numeri gialli negli ultimi 10 s: evita toggle DOM a ogni frame
+function applyBarColor(frac) {
+  const tier = frac <= 0.10 ? 2 : frac <= 0.25 ? 1 : 0;
+  if (tier === ringColorState) return;
+  ringColorState = tier;
+  let bg;
+  if (tier === 2)      bg = "linear-gradient(90deg, #ef4444, #f87171)";
+  else if (tier === 1) bg = "linear-gradient(90deg, #f59e0b, #fbbf24)";
+  else                 bg = "linear-gradient(90deg, " + ACCENT1 + ", " + ACCENT2 + ")";
+  progressFill.style.background = bg;
+}
+
+function updateEndTime() {
+  if (state.running) {
+    const d = new Date(Date.now() + state.remaining);
+    endTimeEl.textContent = tr("ends_at") +
+      String(d.getHours()).padStart(2, "0") + ":" +
+      String(d.getMinutes()).padStart(2, "0");
+    endTimeEl.hidden = false;
+  } else {
+    endTimeEl.hidden = true;
+  }
+}
+
+// Play: numeri dimensionati per occupare ~90% della larghezza schermo.
+// Il canvas usa lo stesso motore font del layout: una sola misura è
+// esatta perché la larghezza del testo scala linearmente col font-size.
+// Si ricalcola solo se cambiano lunghezza del testo o larghezza finestra
+// (il check per frame è O(1)); in menu rimuove la dimensione inline così
+// i numeri del pannello restano invariati.
+const fitCtx = document.createElement("canvas").getContext("2d");
+let fitKey = "";
+function fitTime() {
+  if (!document.body.classList.contains("playing")) {
+    if (timeEl.style.fontSize !== "") timeEl.style.fontSize = "";
+    fitKey = "";
+    return;
+  }
+  const key = timeEl.textContent.length + ":" + window.innerWidth;
+  if (key === fitKey) return;
+  fitKey = key;
+  const cs = getComputedStyle(timeEl);
+  const n = timeEl.textContent.length;
+  fitCtx.font = "700 100px " + cs.fontFamily;
+  const emW = fitCtx.measureText(timeEl.textContent).width / 100;
+  const lsEm = (parseFloat(cs.letterSpacing) || 0) / parseFloat(cs.fontSize) * n;
+  const target = window.innerWidth * 0.90;
+  const size = Math.min(target / (emW + lsEm),
+                        window.innerHeight * 0.85);
+  timeEl.style.fontSize = size.toFixed(1) + "px";
+}
+
+function render() {
+  const txt = fmt(state.remaining);
+  timeEl.textContent = txt;
+  timeEl.classList.toggle("has-hours", txt.length > 5);
+  fitTime();
+  // Giallo a 10 secondi dalla fine (solo durante la corsa)
+  const warn = state.running && state.remaining <= 10000;
+  if (warn !== warnState) {
+    warnState = warn;
+    timeEl.classList.toggle("warn", warn);
+  }
+  const frac = state.total > 0 ? state.remaining / state.total : 0;
+  progressFill.style.width = (frac * 100) + "%";
+  ringFg.style.strokeDashoffset = String(100 - frac * 100);
+  applyBarColor(frac);
+  document.title = state.running
+    ? fmt(state.remaining) + " — " + (titleInput.value || tr("app_title"))
+    : tr("app_title");
+}
+
+let prevWholeSec = -1;
+function tick() {
+  if (!state.running) return;
+  state.remaining = state.endTime - performance.now();
+  if (state.remaining <= 0) {
+    state.remaining = 0;
+    prevWholeSec = -1;
+    render();
+    finish();
+    return;
+  }
+  // Bip al secondo negli ultimi N secondi (configurabile)
+  const wholeSec = Math.ceil(state.remaining / 1000);
+  if (tickBeepChk.checked && wholeSec <= tickSecVal && wholeSec !== prevWholeSec) {
+    playTickBeep();
+  }
+  prevWholeSec = wholeSec;
+  render();
+}
+
+function playTickBeep() {
+  const vol = (parseInt(volIn.value, 10) || 0) / 100;
+  if (vol <= 0) return;
+  ensureAudio();
+  if (!audioCtx) return;
+  try { strike("bip", audioCtx.currentTime, vol); } catch (err) { console.warn("Bip tick fallito:", err); }
+}
+
+function loop() {
+  if (!state.running) return;
+  tick();
+  if (state.running) rafId = requestAnimationFrame(loop);
+}
+
+function setRunningUI(running) {
+  updateStartLabel();
+  updateSkipBtns(); // in pausa/attesa si può saltare a un altro timer
+}
+
+// Fullscreen reale via Web Fullscreen API: se il browser rifiuta
+// (es. file:// senza gesture), il countdown parte comunque.
+function enterFullscreen() {
+  if (document.fullscreenElement) return;
+  const p = document.documentElement.requestFullscreen();
+  if (p && p.catch) p.catch((err) => console.warn("Fullscreen non disponibile:", err));
+}
+
+function toggleFullscreen() {
+  if (!document.fullscreenElement) {
+    enterFullscreen();
+  } else {
+    const p = document.exitFullscreen();
+    if (p && p.catch) p.catch((err) => console.warn("Uscita fullscreen fallita:", err));
+  }
+}
+
+function toggle() {
+  if (state.running) {
+    state.running = false;
+    cancelAnimationFrame(rafId);
+    clearInterval(intervalId);
+    state.remaining = Math.max(0, state.endTime - performance.now());
+    setRunningUI(false);
+    document.body.classList.remove("playing");
+    updateEndTime();
+    render();
+    return;
+  }
+  // Coda: timer scaduto con altri in coda → Spazio mostra il prossimo (non lo avvia)
+  if (queueAwaitNext) { showNextQueueItem(); return; }
+  // A tempo scaduto (00:00 rosso pulsante) lo Spazio non riavvia: torna al menu
+  if (state.remaining <= 0) { reset(); return; }
+  // Modalità Coda, sessione non ancora avviata → parte il primo timer della coda
+  if (queueMode && !queueRun) { startQueue(); return; }
+  // Prossimo timer già mostrato nel menu: parte quello che è dopo l'ultimo finito
+  // nell'ordine ATTUALE dell'elenco (può essere cambiato nel frattempo)
+  if (queuePending && !commitPending()) { reset(); return; }
+  beginRun();
+}
+
+function beginRun() {
+  state.endTime = performance.now() + state.remaining;
+  state.running = true;
+  setRunningUI(true);
+  document.body.classList.remove("done");
+  doneMsgEl.hidden = true;
+  document.body.classList.add("playing");
+  ensureAudio(); // sblocca l'AudioContext dentro un user gesture
+  updateEndTime();
+  loop();
+  // Safety net: rAF is paused in background tabs, the interval keeps
+  // the countdown accurate and fires the completion on time.
+  intervalId = setInterval(tick, 1000);
+}
+
+function reset() {
+  state.running = false;
+  cancelAnimationFrame(rafId);
+  clearInterval(intervalId);
+  prevWholeSec = -1;
+  state.remaining = state.total;
+  setRunningUI(false);
+  document.body.classList.remove("playing");
+  document.body.classList.remove("done");
+  doneMsgEl.hidden = true;
+  // Coda: l'azzeramento interrompe la sessione (la lista resta intatta)
+  queueRun = null;
+  queueAwaitNext = false;
+  queueCurRow = null;
+  queueDoneSet = new Set();
+  queueDoneRow = null;
+  queuePending = false;
+  markQueueProgress(false); // sessione finita: via le evidenziazioni
+  previewQueue(); // in modalità Coda torna a mostrare il primo timer
+  updateEndTime();
+  render();
+}
+
+function finish() {
+  state.running = false;
+  cancelAnimationFrame(rafId);
+  clearInterval(intervalId);
+  setRunningUI(false);
+  // Togli il giallo "ultimi 10 secondi": a tempo scaduto conta solo il rosso
+  timeEl.classList.remove("warn");
+  warnState = false;
+  // Rosso pulsante continuo: resta finché non si preme Spazio (riavvio) o R (reset)
+  document.body.classList.add("done");
+  doneMsgEl.hidden = false;
+  updateEndTime();
+  beep();
+  // Coda: se c'è un timer successivo, lo Spazio mostrerà il prossimo
+  if (queueRun && queueCurRow) {
+    queueDoneSet.add(queueCurRow);
+    queueDoneRow = queueCurRow;
+    queueDoneIdx = Array.prototype.indexOf.call(queueListEl.children, queueCurRow);
+    queueCurRow = null;
+    if (nextQueueRow()) queueAwaitNext = true;
+    markQueueProgress(false);
+  }
+}
+
+function ensureAudio() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  } catch (err) {
+    console.warn("Audio non disponibile:", err);
+  }
+}
+
+// Suono finale selezionabile (sintetizzato via Web Audio, zero asset esterni)
+// oppure file audio caricato dall'utente. Volume 0-100.
+// endFreq opzionale: se presente la frequenza fa un ramp esponenziale da freq a
+// endFreq durante dur (usato per la sirena).
+function tone(freq, start, dur, vol, type = "sine", endFreq = null) {
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type;
+  if (endFreq != null) {
+    osc.frequency.setValueAtTime(freq, start);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(1, endFreq), start + dur);
+  } else {
+    osc.frequency.value = freq;
+  }
+  gain.gain.setValueAtTime(0.0001, start);
+  gain.gain.exponentialRampToValueAtTime(Math.max(0.001, vol), start + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(start);
+  osc.stop(start + dur + 0.05);
+}
+
+// Un singolo "squillo" del suono scelto, a partire da t0.
+function strike(choice, t0, vol) {
+  switch (choice) {
+    case "campanella":
+      // Due parziali (fondamentale + armonico) con decadimento: suono da campana
+      tone(1318.5, t0, 1.4, vol);
+      tone(2637, t0, 0.9, vol * 0.4);
+      break;
+    case "ding":
+      // Acuto pulito
+      tone(1568, t0, 0.6, vol);
+      break;
+    case "sirena":
+      // Salita + discesa di frequenza (andata e ritorno)
+      tone(600, t0, 0.25, vol, "sawtooth", 1200);
+      tone(1200, t0 + 0.25, 0.25, vol, "sawtooth", 600);
+      break;
+    case "arpeggio": {
+      // Salita Do-Mi-Sol-Do (onda a triangolo, morbida)
+      const notes = [523.25, 659.25, 783.99, 1046.5];
+      for (let i = 0; i < notes.length; i++) tone(notes[i], t0 + i * 0.08, 0.18, vol, "triangle");
+      break;
+    }
+    default: // bip
+      tone(880, t0, 0.25, vol);
+  }
+}
+
+// Distanza tra l'inizio di uno squillo e il successivo, per tipo di suono.
+const STRIKE_GAP = { bip: 0.35, ding: 0.7, campanella: 1.0, sirena: 0.6, arpeggio: 0.5 };
+
+// Ripete 3 squilli del suono scelto (usato sia in anteprima sia a fine countdown).
+function playSound3(choice, vol) {
+  const t0 = audioCtx.currentTime;
+  const gap = STRIKE_GAP[choice] || 0.4;
+  for (let i = 0; i < 3; i++) strike(choice, t0 + i * gap, vol);
+}
+
+// Anteprima del suono scelto al momento della selezione dal menu:
+// suoni sintetizzati → 3 squilli (come a fine countdown); file audio → estratto
+// di 1 secondo.
+function previewSound() {
+  const vol = (parseInt(volIn.value, 10) || 0) / 100;
+  if (vol <= 0) return;
+  const choice = soundSel.value;
+  if (choice === "custom") {
+    if (!customSoundUrl) return;
+    try {
+      const a = new Audio(customSoundUrl);
+      a.volume = vol;
+      const stop = () => { a.pause(); a.removeEventListener("timeupdate", stop); };
+      a.addEventListener("timeupdate", () => { if (a.currentTime >= 1) stop(); });
+      a.play().catch((err) => console.warn("Anteprima audio fallita:", err));
+    } catch (err) {
+      console.warn("Audio non disponibile:", err);
+    }
+    return;
+  }
+  ensureAudio();
+  if (!audioCtx) return;
+  try {
+    playSound3(choice, vol);
+  } catch (err) {
+    console.warn("Anteprima audio fallita:", err);
+  }
+}
+
+function beep() {
+  if (!soundOnChk.checked) return;
+  const vol = (parseInt(volIn.value, 10) || 0) / 100;
+  if (vol <= 0) return;
+  const choice = soundSel.value;
+  if (choice === "custom") {
+    if (!customSoundUrl) { soundSel.value = "bip"; return; }
+    try {
+      const a = new Audio(customSoundUrl);
+      a.volume = vol;
+      a.play().catch((err) => console.warn("Riproduzione file audio fallita:", err));
+    } catch (err) {
+      console.warn("Audio non disponibile:", err);
+    }
+    return;
+  }
+  ensureAudio();
+  if (!audioCtx) return;
+  try {
+    playSound3(choice, vol);
+  } catch (err) {
+    console.warn("Audio non disponibile:", err);
+  }
+}
+
+function clampInt(v, min, max) {
+  const n = parseInt(v, 10);
+  if (Number.isNaN(n)) return min;
+  return Math.min(max, Math.max(min, n));
+}
+
+function clearActivePreset() {
+  const active = presetsWrap.querySelector(".preset.active");
+  if (active) active.classList.remove("active");
+}
+
+presetsWrap.addEventListener("click", (e) => {
+  const btn = e.target.closest(".preset");
+  if (!btn) return;
+  clearActivePreset();
+  clearActiveCustomPreset();
+  btn.classList.add("active");
+  const min = Number(btn.dataset.min);
+  // Sincronizza i campi manuali col preset scelto
+  hIn.value = "0";
+  mIn.value = String(min);
+  sIn.value = "0";
+  state.total = min * 60000;
+  reset();
+});
+
+function readCustom() {
+  const h = clampInt(hIn.value, 0, 99);
+  const m = clampInt(mIn.value, 0, 59);
+  const s = clampInt(sIn.value, 0, 59);
+  const total = (h * 3600 + m * 60 + s) * 1000;
+  if (total > 0) {
+    clearActivePreset();
+    clearActiveCustomPreset();
+    state.total = total;
+    reset();
+  }
+}
+for (const el of [hIn, mIn, sIn]) el.addEventListener("change", readCustom);
+
+/* ===== Preset personalizzati: 4 slot salvabili in localStorage ===== */
+const customPresetsEl = document.getElementById("customPresets");
+const savePresetBtn = document.getElementById("savePresetBtn");
+const CUSTOM_KEY = "cd_custom_presets";
+let customPresets = [null, null, null, null]; // slot: null oppure {h, m, s}
+let activeCustom = -1;                        // slot attivo (-1 = nessuno)
+
+function loadCustomPresets() {
+  try {
+    const raw = localStorage.getItem(CUSTOM_KEY);
+    if (!raw) return;
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) {
+      for (let i = 0; i < 4; i++) {
+        const p = arr[i];
+        if (p && Number.isInteger(p.h) && Number.isInteger(p.m) && Number.isInteger(p.s)
+            && p.h >= 0 && p.h <= 99 && p.m >= 0 && p.m <= 59 && p.s >= 0 && p.s <= 59) {
+          customPresets[i] = { h: p.h, m: p.m, s: p.s };
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("Preset personalizzati non caricati:", err);
+  }
+}
+
+function saveCustomPresets() {
+  try {
+    localStorage.setItem(CUSTOM_KEY, JSON.stringify(customPresets));
+  } catch (err) {
+    console.warn("Preset personalizzati non salvati:", err);
+  }
+}
+
+function renderCustomPresets() {
+  customPresetsEl.textContent = "";
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < 4; i++) {
+    const p = customPresets[i];
+    const slot = document.createElement("div");
+    slot.className = "cp-slot" + (p ? " filled" : "") + (i === activeCustom ? " active" : "");
+    if (p) {
+      slot.textContent = fmt((p.h * 3600 + p.m * 60 + p.s) * 1000);
+      slot.title = tr("cp_apply");
+      slot.tabIndex = 0;
+      slot.addEventListener("click", () => applyCustomPreset(i));
+      slot.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); applyCustomPreset(i); }
+      });
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "cp-del";
+      del.textContent = "\u00d7";
+      del.title = tr("cp_delete");
+      del.addEventListener("click", (e) => {
+        e.stopPropagation();
+        customPresets[i] = null;
+        if (activeCustom === i) activeCustom = -1;
+        saveCustomPresets();
+        renderCustomPresets();
+        updateSaveBtn();
+      });
+      slot.appendChild(del);
+    } else {
+      slot.textContent = "+";
+      slot.title = tr("cp_empty_slot");
+    }
+    frag.appendChild(slot);
+  }
+  customPresetsEl.appendChild(frag);
+}
+
+function applyCustomPreset(i) {
+  const p = customPresets[i];
+  if (!p) return;
+  clearActivePreset();
+  hIn.value = String(p.h);
+  mIn.value = String(p.m);
+  sIn.value = String(p.s);
+  state.total = (p.h * 3600 + p.m * 60 + p.s) * 1000;
+  reset();
+  activeCustom = i;
+  const el = customPresetsEl.children[i];
+  if (el) el.classList.add("active");
+}
+
+function clearActiveCustomPreset() {
+  if (activeCustom === -1) return;
+  const el = customPresetsEl.children[activeCustom];
+  if (el) el.classList.remove("active");
+  activeCustom = -1;
+}
+
+function updateSaveBtn() {
+  const full = customPresets.every((p) => p !== null);
+  savePresetBtn.classList.toggle("full", full);
+  savePresetBtn.title = full ? tr("cp_full") : tr("cp_save");
+}
+
+savePresetBtn.addEventListener("click", () => {
+  const h = clampInt(hIn.value, 0, 99);
+  const m = clampInt(mIn.value, 0, 59);
+  const s = clampInt(sIn.value, 0, 59);
+  if (h === 0 && m === 0 && s === 0) {
+    savePresetBtn.title = tr("cp_zero");
+    return;
+  }
+  const idx = customPresets.indexOf(null);
+  if (idx === -1) {
+    savePresetBtn.classList.add("full");
+    savePresetBtn.title = tr("cp_full");
+    return;
+  }
+  customPresets[idx] = { h, m, s };
+  saveCustomPresets();
+  renderCustomPresets();
+  updateSaveBtn();
+  readCustom(); // sincronizza il countdown con i campi appena salvati
+});
+
+loadCustomPresets();
+renderCustomPresets();
+updateSaveBtn();
+
+// ---- Temi di colore (suggerimento 16) ----
+const themeDots = Array.from(document.querySelectorAll(".theme-dot"));
+// baseTheme = il colore scelto dall'utente nel menu a destra (è quello salvato).
+// applyTheme applica un colore SENZA salvarlo né toccare i pallini: serve ai timer
+// della coda, che possono avere un colore proprio; showTheme(null) torna al colore base.
+let baseTheme = currentTheme;
+function applyTheme(name) {
+  if (!THEMES[name]) return;
+  currentTheme = name;
+  if (name === "") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.dataset.theme = name;
+  [ACCENT1, ACCENT2] = THEMES[name];
+  ringColorState = -1; // forza la riapplicazione dei colori dell'anello anche se la soglia non cambia
+  applyBarColor(state.total > 0 ? state.remaining / state.total : 0);
+}
+function showTheme(t) {
+  const k = t == null ? baseTheme : t;
+  if (k !== currentTheme) applyTheme(k);
+}
+function setTheme(name) {
+  if (!THEMES[name]) return;
+  baseTheme = name;
+  applyTheme(name);
+  for (const d of themeDots) d.classList.toggle("active", d.dataset.theme === name);
+  try { localStorage.setItem("cd_theme", name); } catch (err) { console.warn("Tema non salvato:", err); }
+  document.dispatchEvent(new Event("themechange")); // la maschera della coda aggiorna il colore predefinito
+}
+for (const d of themeDots) d.addEventListener("click", () => setTheme(d.dataset.theme));
+setTheme(currentTheme); // sincronizza pallini e anello col tema salvato
+
+// ---- Coda di countdown: colonna a sinistra del timer --------------------
+// Ogni riga ha titolo proprio e durata h:m:s. "Avvio Coda" parte col primo;
+// a tempo scaduto lo Spazio mostra il successivo nel menu e un altro
+// Spazio lo avvia, e così via. La lista non viene consumata: al termine
+// della coda si può ripartire da capo.
+const queueListEl = $("queueList"),
+      qCountEl = $("qCount"),
+      clearQueueBtn = $("clearQueueBtn"),
+      qMask = $("qMask"), mTitle = $("mTitle"), mH = $("mH"), mM = $("mM"), mS = $("mS"),
+      mLogoBtn = $("mLogoBtn"), mAddBtn = $("mAddBtn"), mLogoPrev = $("mLogoPrev"),
+      mLogoIn = $("mLogoIn"), mLogoFile = $("mLogoFile"), mLogoClr = $("mLogoClr"),
+      mColorBtn = $("mColorBtn"), mColorRow = $("mColorRow");
+let maskLogo = null; // logo scelto nella maschera
+let maskTheme = null; // colore scelto nella maschera (null = quello dell'interfaccia)
+
+let queueRun = null;        // sessione di coda attiva (true dopo "Avvio Coda", null a riposo)
+let queueAwaitNext = false; // timer scaduto, in attesa di Spazio per mostrare il prossimo
+let queueMode = false;      // false = modalità Singolo, true = modalità Coda
+let queueCurRow = null;     // riga in corso (o in pausa)
+let queueDoneSet = new Set(); // righe già eseguite in questa sessione
+let queueDoneRow = null;    // ultima riga terminata: il prossimo timer è quello DOPO di lei, nell'ordine attuale
+let queueDoneIdx = -1;      // sua posizione al termine (se la riga viene poi eliminata)
+let queuePending = false;   // prossimo timer mostrato nel menu, non ancora avviato
+let queueSel = null;        // riga dell'elenco selezionata (la maschera la modifica); null = maschera per un NUOVO timer
+let maskDirty = false;      // la maschera (nuovo timer) è stata toccata: l'anteprima in alto la mostra
+let suppressRowClick = 0;   // evita che il rilascio di un trascinamento selezioni la riga
+let logoOverride = null;    // logo del timer di coda mostrato: ha la precedenza sul logo generale
+
+// Costruisce una riga della coda (2 righe: titolo+azioni / durata) senza
+// aggiungerla al DOM. I listener chiudono sulla propria `row`, così ogni
+// elemento gestisce in modo indipendente la rimozione e la duplicazione.
+// ---- Elenco compatto + maschera unica ----
+// Ogni riga conserva i propri dati in row._d = { title, h, m, s, logo };
+// la maschera in basso modifica la riga selezionata oppure prepara un nuovo timer.
+const LOGO_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg>';
+const DEFAULT_DUR = { h: 0, m: 5, s: 0 };
+
+function durMs(d) { return (d.h * 3600 + d.m * 60 + d.s) * 1000; }
+function fmtDur(d) { return d.h + ":" + String(d.m).padStart(2, "0") + ":" + String(d.s).padStart(2, "0"); }
+// Mette in un elemento l'immagine o il testo del logo (o l'icona se non c'è)
+function fillLogo(el, l, icon) {
+  el.textContent = "";
+  if (l && l.type === "image") {
+    const im = document.createElement("img");
+    im.src = l.value;
+    im.alt = "";
+    el.appendChild(im);
+  } else if (l) {
+    el.textContent = l.value;
+  } else if (icon) {
+    el.innerHTML = icon;
+  }
+}
+// Stile (--c1/--c2) di un tema, copiato dal pallino corrispondente del menu a destra
+function themeDotStyle(name) {
+  const el = themeDots.find((x) => x.dataset.theme === name);
+  return el ? el.getAttribute("style") : "";
+}
+// Aggiorna la vista compatta di una riga dai suoi dati
+function renderRow(row) {
+  const d = row._d;
+  const t = row.querySelector(".qr-title");
+  t.textContent = d.title || tr("no_title");
+  t.classList.toggle("empty", !d.title);
+  row.querySelector(".qr-time").textContent = fmtDur(d);
+  const th = row.querySelector(".qr-theme");
+  th.hidden = d.theme == null; // niente pallino se segue il colore dell'interfaccia
+  if (d.theme != null) th.setAttribute("style", themeDotStyle(d.theme));
+  const lg = row.querySelector(".qr-logo");
+  lg.hidden = !d.logo;
+  fillLogo(lg, d.logo, "");
+}
+function buildQueueRow(d) {
+  const row = document.createElement("div");
+  row.className = "queue-item";
+  row._d = { title: d.title, h: d.h, m: d.m, s: d.s, logo: d.logo || null, theme: d.theme == null ? null : d.theme };
+
+  const num = document.createElement("span");
+  num.className = "q-num";
+  num.title = tr("drag_reorder");
+  const title = document.createElement("span");
+  title.className = "qr-title";
+  const themeDot = document.createElement("span");
+  themeDot.className = "qr-theme";
+  const logo = document.createElement("span");
+  logo.className = "qr-logo";
+  const time = document.createElement("span");
+  time.className = "qr-time";
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "q-del";
+  /* Icona "x": due tratti diagonali, stroke currentColor */
+  del.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+  del.title = tr("remove_from_queue");
+  del.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const wasSel = queueSel === row;
+    row.remove();
+    if (wasSel) deselectRow(true); else syncQueueUI();
+  });
+  // Click sulla riga: apre le sue impostazioni nella maschera (di nuovo: le chiude)
+  row.addEventListener("click", (e) => {
+    if (e.target.closest("button") || Date.now() < suppressRowClick) return;
+    if (queueSel === row) deselectRow(true); else selectRow(row);
+  });
+  row.addEventListener("pointerdown", (e) => startQueueDrag(e, row));
+  const skip = document.createElement("button");
+  skip.type = "button";
+  skip.className = "q-skip";
+  /* Icona "salta": doppia freccia + barra, stroke currentColor */
+  skip.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6l6 6-6 6"/><path d="M11.5 6l6 6-6 6"/><path d="M20 5v14"/></svg>';
+  skip.title = tr("skip_to_timer");
+  skip.hidden = true;
+  skip.addEventListener("click", (e) => {
+    e.stopPropagation();
+    skipToRow(row);
+  });
+  row.append(num, title, themeDot, logo, time, del, skip);
+  renderRow(row);
+  return row;
+}
+
+// --- Maschera ---
+function readMask() {
+  return {
+    title: mTitle.value.trim(),
+    h: clampInt(mH.value, 0, 99),
+    m: clampInt(mM.value, 0, 59),
+    s: clampInt(mS.value, 0, 59),
+    logo: maskLogo,
+    theme: maskTheme
+  };
+}
+function refreshMaskLogoUI() {
+  fillLogo(mLogoBtn, maskLogo, LOGO_ICON);
+  fillLogo(mLogoPrev, maskLogo, LOGO_ICON);
+  mLogoBtn.classList.toggle("on", !!maskLogo);
+  const isData = maskLogo && maskLogo.type === "image" && maskLogo.value.startsWith("data:");
+  mLogoIn.value = maskLogo && !isData ? maskLogo.value : "";
+  mLogoIn.placeholder = isData ? tr("img_loaded") : tr("ph_logo_url2");
+  mLogoIn.classList.remove("bad");
+}
+function writeMask(d) {
+  mTitle.value = d.title;
+  mH.value = d.h; mM.value = d.m; mS.value = d.s;
+  maskLogo = d.logo || null;
+  maskTheme = d.theme == null ? null : d.theme;
+  refreshMaskLogoUI();
+  refreshMaskThemeUI();
+}
+// Modifica nella maschera: aggiorna la riga selezionata (se c'è) e l'anteprima in alto
+function onMaskInput() {
+  if (queueSel && queueSel.isConnected) { queueSel._d = readMask(); renderRow(queueSel); }
+  else maskDirty = true;
+  previewQueue();
+}
+function setMaskLogo(l) {
+  maskLogo = l || null;
+  refreshMaskLogoUI();
+  onMaskInput();
+}
+// Colore della maschera: null = segue il colore scelto a destra (predefinito)
+function refreshMaskThemeUI() {
+  const eff = maskTheme == null ? baseTheme : maskTheme;
+  for (const b of themeSwatches) b.classList.toggle("on", b.dataset.theme === eff);
+  mColorBtn.querySelector(".q-color-dot").setAttribute("style", themeDotStyle(eff));
+  mColorBtn.classList.toggle("on", maskTheme != null);
+}
+function setMaskTheme(name) {
+  maskTheme = name;
+  refreshMaskThemeUI();
+  onMaskInput();
+}
+function selectRow(row) {
+  if (queueSel) queueSel.classList.remove("selected");
+  queueSel = row;
+  row.classList.add("selected");
+  qMask.classList.add("editing");
+  maskDirty = false;
+  writeMask(row._d);
+  syncQueueUI();
+}
+// Chiude la modifica; con resetMask la maschera torna vuota (titolo, logo, 0:05:00)
+function deselectRow(resetMask) {
+  if (queueSel) queueSel.classList.remove("selected");
+  queueSel = null;
+  qMask.classList.remove("editing");
+  maskDirty = false;
+  if (resetMask) writeMask({ title: "", ...DEFAULT_DUR, logo: null, theme: null });
+  syncQueueUI();
+}
+// "+": aggiunge in fondo alla coda un timer con i valori della maschera
+function addFromMask() {
+  const d = readMask();
+  if (durMs(d) <= 0) {
+    for (const i of [mH, mM, mS]) i.classList.add("bad");
+    setTimeout(() => { for (const i of [mH, mM, mS]) i.classList.remove("bad"); }, 700);
+    return;
+  }
+  if (queueSel) queueSel.classList.remove("selected");
+  queueSel = null;
+  qMask.classList.remove("editing");
+  queueListEl.appendChild(buildQueueRow(d));
+  // pronta per il timer successivo: stessa durata, titolo e logo vuoti
+  mTitle.value = "";
+  maskLogo = null;
+  maskTheme = null; // il prossimo timer riparte dal colore predefinito
+  refreshMaskLogoUI();
+  refreshMaskThemeUI();
+  maskDirty = false;
+  syncQueueUI();
+  queueListEl.scrollTop = queueListEl.scrollHeight; // mostra la riga appena aggiunta
+  mTitle.focus();
+}
+
+mAddBtn.addEventListener("click", addFromMask);
+for (const el of [mTitle, mH, mM, mS]) {
+  el.addEventListener("input", onMaskInput);
+  // Invio: aggiunge il timer (o chiude la modifica se ne stai modificando uno)
+  el.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    if (queueSel) deselectRow(true); else addFromMask();
+  });
+}
+for (const el of [mH, mM, mS]) {
+  el.addEventListener("change", () => { el.value = clampInt(el.value, 0, +el.max); });
+}
+// Click su uno spazio vuoto fuori dalle righe e dalla maschera: chiude la
+// modifica del timer selezionato e riporta il menu alle impostazioni di default.
+// Ignora gli elementi interattivi (pulsanti, campi, etichette…) così un click
+// sui controlli non cancella mai la selezione per sbaglio.
+document.addEventListener("click", (e) => {
+  if (!queueMode || !queueSel || queueRun || Date.now() < suppressRowClick) return;
+  const t = e.target;
+  if (t.closest(".queue-item, #qMask")) return; // righe e maschera gestiscono da sole
+  if (t.closest("button, input, select, textarea, label, a")) return;
+  deselectRow(true);
+});
+// Logo e colore condividono lo stesso spazio sotto la maschera: se ne apre uno alla volta
+function togglePanel(which) {
+  const cls = which + "-open", open = !qMask.classList.contains(cls);
+  qMask.classList.remove("logo-open", "color-open");
+  mLogoBtn.setAttribute("aria-expanded", "false");
+  mColorBtn.setAttribute("aria-expanded", "false");
+  if (open) {
+    qMask.classList.add(cls);
+    (which === "logo" ? mLogoBtn : mColorBtn).setAttribute("aria-expanded", "true");
+    if (which === "logo") mLogoIn.focus();
+  }
+}
+mLogoBtn.addEventListener("click", () => togglePanel("logo"));
+mColorBtn.addEventListener("click", () => togglePanel("color"));
+// Palette: gli stessi colori del menu a destra
+const themeSwatches = themeDots.map((d) => {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "q-theme-dot";
+  b.dataset.theme = d.dataset.theme;
+  b.setAttribute("style", d.getAttribute("style"));
+  b.title = d.title;
+  b.addEventListener("click", () => setMaskTheme(d.dataset.theme));
+  mColorRow.appendChild(b);
+  return b;
+});
+document.addEventListener("themechange", refreshMaskThemeUI);
+mLogoIn.addEventListener("change", () => {
+  const v = mLogoIn.value.trim();
+  if (!v) { setMaskLogo(null); return; }
+  if (/^(https?:\/\/|data:image\/)/i.test(v)) {
+    // Verifica che l'URL sia raggiungibile PRIMA di applicarlo
+    const probe = new Image();
+    probe.onload = () => { mLogoIn.classList.remove("bad"); setMaskLogo({ type: "image", value: v }); };
+    probe.onerror = () => { mLogoIn.classList.add("bad"); mLogoIn.title = tr("url_unreachable"); };
+    probe.src = v;
+  } else {
+    mLogoIn.classList.remove("bad");
+    setMaskLogo({ type: "text", value: Array.from(v).slice(0, 4).join("") });
+  }
+});
+mLogoFile.addEventListener("change", () => {
+  const file = mLogoFile.files[0];
+  mLogoFile.value = "";
+  if (!file || !file.type.startsWith("image/")) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      // Ridimensiona a max 450 px, come per il logo generale
+      const sc = Math.min(1, 450 / Math.max(img.width, img.height));
+      const cv = document.createElement("canvas");
+      cv.width = Math.max(1, Math.round(img.width * sc));
+      cv.height = Math.max(1, Math.round(img.height * sc));
+      cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+      setMaskLogo({ type: "image", value: cv.toDataURL("image/png") });
+    };
+    img.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+});
+mLogoClr.addEventListener("click", () => setMaskLogo(null));
+refreshMaskLogoUI();
+refreshMaskThemeUI();
+if ("ResizeObserver" in window) new ResizeObserver(alignMask).observe(queueListEl);
+window.addEventListener("resize", alignMask);
+
+// ---- Riordino per trascinamento (mouse e touch) ----
+// Si trascina la riga da qualsiasi punto che non sia un campo o un pulsante
+// (con il touch solo dal numero). Mentre si trascina le altre righe si
+// spostano con una breve animazione; vicino ai bordi la lista scorre da sola.
+function startQueueDrag(e, row) {
+  if (e.button !== undefined && e.button !== 0) return;
+  if (e.target.closest("input, button, select, textarea, label")) return;
+  if (e.pointerType !== "mouse" && !e.target.closest(".q-num")) return;
+  e.preventDefault();
+  const list = queueListEl, pid = e.pointerId, GAP = parseFloat(getComputedStyle(queueListEl).rowGap) || 0;
+  let startY = e.clientY, lastY = e.clientY;
+  const startScroll = list.scrollTop;
+  let dragging = false, raf = 0;
+  try { row.setPointerCapture(pid); } catch (err) { /* capture non disponibile */ }
+
+  function apply() {
+    row.style.transform = "translateY(" + (lastY - startY + (list.scrollTop - startScroll)) + "px)";
+  }
+  // Sposta nel DOM la riga vicina (mai quella trascinata, per non perdere il
+  // pointer capture) e compensa il salto di layout della riga trascinata.
+  function shift(other, dir) {
+    const before = other.getBoundingClientRect().top;
+    if (dir > 0) list.insertBefore(other, row);
+    else list.insertBefore(other, row.nextSibling);
+    startY += dir * (other.offsetHeight + GAP);
+    const d = before - other.getBoundingClientRect().top;
+    other.style.transition = "none";
+    other.style.transform = "translateY(" + d + "px)";
+    other.getBoundingClientRect(); // forza il reflow prima della transizione
+    other.style.transition = "transform .18s ease";
+    other.style.transform = "";
+    setTimeout(() => { other.style.transition = ""; }, 220);
+    apply();
+    syncQueueUI(); // rinumera e aggiorna l'anteprima del primo timer
+  }
+  function swapIfNeeded() {
+    for (let guard = 0; guard < 50; guard++) {
+      const r = row.getBoundingClientRect(), mid = r.top + r.height / 2;
+      const next = row.nextElementSibling, prev = row.previousElementSibling;
+      if (next) {
+        const nr = next.getBoundingClientRect();
+        if (mid > nr.top + nr.height / 2) { shift(next, 1); continue; }
+      }
+      if (prev) {
+        const pr = prev.getBoundingClientRect();
+        if (mid < pr.top + pr.height / 2) { shift(prev, -1); continue; }
+      }
+      break;
+    }
+  }
+  function autoScroll() {
+    if (!dragging) return;
+    const lr = list.getBoundingClientRect(), EDGE = 36;
+    let v = 0;
+    if (lastY < lr.top + EDGE) v = -Math.min(14, Math.ceil((lr.top + EDGE - lastY) / 5));
+    else if (lastY > lr.bottom - EDGE) v = Math.min(14, Math.ceil((lastY - (lr.bottom - EDGE)) / 5));
+    if (v) { list.scrollTop += v; apply(); swapIfNeeded(); }
+    raf = requestAnimationFrame(autoScroll);
+  }
+  function onMove(ev) {
+    if (ev.pointerId !== pid) return;
+    lastY = ev.clientY;
+    if (!dragging) {
+      if (Math.abs(lastY - startY) < 4) return; // soglia: un semplice click non sposta nulla
+      dragging = true;
+      row.classList.add("dragging");
+      list.classList.add("is-dragging");
+      raf = requestAnimationFrame(autoScroll);
+    }
+    apply();
+    swapIfNeeded();
+  }
+  function onEnd(ev) {
+    if (ev.pointerId !== pid) return;
+    row.removeEventListener("pointermove", onMove);
+    row.removeEventListener("pointerup", onEnd);
+    row.removeEventListener("pointercancel", onEnd);
+    try { row.releasePointerCapture(pid); } catch (err) { /* già rilasciato */ }
+    cancelAnimationFrame(raf);
+    if (dragging) {
+      // la riga "atterra" con una breve animazione nella sua posizione finale
+      row.style.transition = "transform .18s ease";
+      row.style.transform = "";
+      list.classList.remove("is-dragging");
+      setTimeout(() => { row.classList.remove("dragging"); row.style.transition = ""; }, 200);
+      suppressRowClick = Date.now() + 300; // il rilascio non deve selezionare la riga
+      syncQueueUI();
+    }
+  }
+  row.addEventListener("pointermove", onMove);
+  row.addEventListener("pointerup", onEnd);
+  row.addEventListener("pointercancel", onEnd);
+}
+
+// Legge le righe visibili e restituisce gli item validi (durata > 0).
+// Legge una riga della coda: titolo, durata (ms) e logo proprio (o null)
+function readRow(row) {
+  const d = row._d;
+  return { title: d.title, ms: durMs(d), logo: d.logo || null, theme: d.theme == null ? null : d.theme };
+}
+function readQueue() {
+  const items = [];
+  for (const row of queueListEl.children) {
+    const it = readRow(row);
+    if (it.ms > 0) items.push(it);
+  }
+  return items;
+}
+
+// La lista riserva spazio a destra (scrollbar + margine): la maschera ne tiene
+// conto, così ha la stessa larghezza delle righe dei timer.
+function alignMask() {
+  const l = queueListEl, cs = getComputedStyle(l);
+  const rowW = l.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  qMask.style.marginRight = Math.max(0, l.offsetWidth - rowW) + "px";
+}
+function syncQueueUI() {
+  const rows = queueListEl.children, n = rows.length;
+  for (let i = 0; i < n; i++) rows[i].querySelector(".q-num").textContent = String(i + 1);
+  qCountEl.hidden = n === 0;
+  if (n > 0) qCountEl.textContent = timerNoun(n);
+  clearQueueBtn.hidden = n === 0 || !queueMode;
+  const idx = queueSel && queueSel.isConnected ? Array.prototype.indexOf.call(rows, queueSel) : -1;
+  mTitle.placeholder = idx >= 0 ? tr("ph_timer_n", { n: idx + 1 }) : tr("ph_new_timer");
+  updateStartLabel();
+  updateSkipBtns();
+  alignMask();
+  previewQueue();
+}
+function updateStartLabel() {
+  startBtn.textContent = state.running ? tr("pause") : (queueMode ? tr("start_queue") : tr("start"));
+  startBtn.classList.toggle("queue-mode", queueMode);
+}
+
+// In modalità Coda, a riposo, anello, titolo e logo mostrano il timer in modifica
+// (durata, titolo e logo si aggiornano mentre si scrive, come il campo Titolo a destra).
+// Non interviene durante una sessione di coda già avviata.
+function previewQueue() {
+  // Sessione in corso col prossimo timer nel menu: l'anteprima segue l'ordine attuale
+  if (queueRun && queuePending && !state.running) { refreshPending(false); return; }
+  if (!queueMode || queueRun || state.running) return;
+  // Si mostra: la riga selezionata, altrimenti la maschera se la stai compilando,
+  // altrimenti il primo timer della coda (o, se è vuota, i valori della maschera)
+  let d;
+  if (queueSel && queueSel.isConnected) d = queueSel._d;
+  else if (maskDirty || !queueListEl.firstElementChild) d = readMask();
+  else d = queueListEl.firstElementChild._d;
+  titleDisplay.textContent = d.title;
+  setLogoOverride(d.logo);
+  // Il colore del timer si vede in anteprima solo mentre lo si modifica; a riposo
+  // (o a sessione finita) l'interfaccia ha il colore scelto a destra
+  const editing = (queueSel && queueSel.isConnected) || maskDirty;
+  showTheme(editing ? d.theme : null);
+  const ms = durMs(d);
+  if (ms > 0) {
+    state.total = ms;
+    state.remaining = ms;
+    render();
+  }
+}
+
+// Prossimo timer da eseguire: tra le righe non ancora eseguite (e con durata),
+// la prima che segue nell'elenco l'ultima terminata; se dopo non ce ne sono,
+// si riparte dalla prima rimasta. Così riordinare le righe a sessione avviata
+// cambia davvero cosa parte.
+function nextQueueRow() {
+  const rows = Array.from(queueListEl.children);
+  const di = queueDoneRow ? (queueDoneRow.isConnected ? rows.indexOf(queueDoneRow) : queueDoneIdx - 0.5) : -1;
+  const cand = rows.filter((r) => !queueDoneSet.has(r) && durMs(r._d) > 0);
+  return cand.find((r) => rows.indexOf(r) > di) || cand[0] || null;
+}
+
+// Evidenzia nell'elenco il timer che partirà (o riprenderà) con Spazio e
+// attenua quelli già eseguiti; con scroll lo porta in vista nella lista.
+function markQueueProgress(scroll) {
+  updateSkipBtns(); // la riga "in play" cambia: aggiorna i bottoni Salta
+  for (const r of queueListEl.children) {
+    r.classList.remove("next");
+    r.classList.toggle("done-it", !!queueRun && queueDoneSet.has(r));
+  }
+  if (!queueRun) return;
+  const target = queueCurRow || (queuePending ? nextQueueRow() : null);
+  if (!target || !target.isConnected) return;
+  target.classList.add("next");
+  if (scroll) {
+    const lr = queueListEl.getBoundingClientRect(), rr = target.getBoundingClientRect();
+    if (rr.top < lr.top) queueListEl.scrollTop -= lr.top - rr.top + 4;
+    else if (rr.bottom > lr.bottom) queueListEl.scrollTop += rr.bottom - lr.bottom + 4;
+  }
+}
+
+// Carica nei display (titolo, logo, anello) i dati attuali di una riga
+function loadQueueRow(row) {
+  const it = readRow(row);
+  titleInput.value = it.title;
+  titleDisplay.textContent = it.title;
+  setLogoOverride(it.logo);
+  showTheme(it.theme); // colore proprio del timer (o quello dell'interfaccia)
+  state.total = it.ms;
+  state.remaining = it.ms;
+}
+// Aggiorna ciò che è mostrato nel menu per il prossimo timer (ordine/modifiche cambiati)
+function refreshPending(scroll) {
+  const r = nextQueueRow();
+  if (r) loadQueueRow(r);
+  markQueueProgress(scroll);
+  render();
+}
+// Spazio sul prossimo timer mostrato: lo si ricalcola e si avvia
+function commitPending() {
+  const r = nextQueueRow();
+  if (!r) return false;
+  loadQueueRow(r);
+  queueCurRow = r;
+  queuePending = false;
+  queueDoneRow = null;
+  markQueueProgress(true);
+  return true;
+}
+
+function startQueue() {
+  const rows = Array.from(queueListEl.children).filter((r) => durMs(r._d) > 0);
+  if (rows.length === 0) { alert(tr("alert_min_one")); return; }
+  queueRun = true;
+  queueAwaitNext = false;
+  queuePending = false;
+  queueDoneSet = new Set();
+  queueDoneRow = null;
+  queueDoneIdx = -1;
+  queueCurRow = rows[0];
+  loadQueueRow(queueCurRow);
+  markQueueProgress(true);
+  beginRun();
+}
+
+// "Salta" per riga: in una sessione di coda in pausa (o in attesa del prossimo)
+// il bottone è visibile su ogni timer tranne quello che partirà con Spazio;
+// premuto, tutto ciò che precede la riga nell'ordine attuale viene considerato
+// eseguito e quel timer diventa quello che partirà con la prossima pressione.
+function updateSkipBtns() {
+  const show = !!(queueRun && !state.running);
+  const target = show ? (queueCurRow || nextQueueRow()) : null;
+  for (const r of queueListEl.children) {
+    const b = r.querySelector(".q-skip");
+    if (b) b.hidden = !show || r === target;
+  }
+}
+function skipToRow(row) {
+  if (!queueRun || state.running) return;
+  if (!row || !row.isConnected || row === queueCurRow) return;
+  if (durMs(row._d) <= 0) return;
+  const rows = Array.from(queueListEl.children);
+  const idx = rows.indexOf(row);
+  if (idx < 0) return;
+  for (let i = 0; i < idx; i++) queueDoneSet.add(rows[i]);
+  queueDoneSet.delete(row); // anche se era già finito in questa sessione, si riparte da qui
+  queueDoneRow = idx > 0 ? rows[idx - 1] : null;
+  queueDoneIdx = idx > 0 ? idx - 1 : -1;
+  queueCurRow = null;
+  queueAwaitNext = false;
+  queuePending = true; // il timer scelto è nel menu e parte con la prossima Spazio
+  refreshPending(true);
+  document.body.classList.remove("playing");
+  document.body.classList.remove("done");
+  doneMsgEl.hidden = true;
+  timeEl.classList.remove("warn");
+  warnState = false;
+  prevWholeSec = -1;
+  updateEndTime();
+  render();
+}
+
+// Timer scaduto con altri in coda: carica il successivo nel menu (non lo avvia).
+function showNextQueueItem() {
+  queueAwaitNext = false;
+  queuePending = true;
+  refreshPending(true);
+  document.body.classList.remove("playing");
+  document.body.classList.remove("done");
+  doneMsgEl.hidden = true;
+  timeEl.classList.remove("warn");
+  warnState = false;
+  prevWholeSec = -1;
+  updateEndTime();
+  render();
+}
+
+clearQueueBtn.addEventListener("click", () => {
+  queueListEl.textContent = "";
+  if (queueSel) deselectRow(true); else syncQueueUI();
+});
+syncQueueUI();
+
+// ---- Modalità Singolo / Coda ----
+// Il pannello Singolo (preset + tempo manuale) scivola a sinistra e il pannello
+// Coda entra da destra; i pulsanti Avvia/schermo intero/azzera restano gli stessi.
+const timerColEl = document.querySelector(".timer-col"),
+      modeSingleBtn = $("modeSingle"), modeQueueBtn = $("modeQueue");
+let singleTotal = state.total; // durata del timer singolo, salvata mentre si è in Coda
+let singleTitle = "";          // titolo del timer singolo, idem
+
+function setMode(toQueue) {
+  if (toQueue === queueMode) return;
+  reset(); // interrompe qualsiasi pausa o sessione di coda
+  if (toQueue) { singleTotal = state.total; singleTitle = titleInput.value; }
+  queueMode = toQueue;
+  timerColEl.classList.toggle("is-queue", toQueue);
+  modeSingleBtn.classList.toggle("active", !toQueue);
+  modeQueueBtn.classList.toggle("active", toQueue);
+  modeSingleBtn.setAttribute("aria-selected", String(!toQueue));
+  modeQueueBtn.setAttribute("aria-selected", String(toQueue));
+  if (toQueue) {
+    previewQueue();
+  } else {
+    state.total = singleTotal;
+    state.remaining = singleTotal;
+    titleInput.value = singleTitle;
+    titleDisplay.textContent = singleTitle;
+    setLogoOverride(null);
+    showTheme(null); // fuori dalla coda: colore scelto a destra
+    render();
+  }
+  syncQueueUI(); // mostra/nasconde Svuota e i suggerimenti della coda
+  updateStartLabel();
+}
+modeSingleBtn.addEventListener("click", () => { setMode(false); modeSingleBtn.blur(); });
+modeQueueBtn.addEventListener("click", () => { setMode(true); modeQueueBtn.blur(); });
+
+// La card può diventare più alta delle impostazioni per far stare 5 timer in
+// coda: il sovrappiù viene "tolto" dal basso spostando la card di metà, così
+// il bordo inferiore (e i pulsanti) restano fermi e la card cresce solo in alto.
+const cardEl = document.querySelector(".card"), settingsEl = document.querySelector(".settings");
+function anchorCard() {
+  if (document.body.classList.contains("playing") || window.matchMedia("(max-width: 920px)").matches) {
+    cardEl.style.top = "0px";
+    return;
+  }
+  const cs = getComputedStyle(cardEl);
+  settingsEl.style.alignSelf = "start"; // altezza naturale delle impostazioni
+  const natural = settingsEl.offsetHeight + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+  settingsEl.style.alignSelf = "";
+  const extra = Math.max(0, cardEl.clientHeight - natural);
+  cardEl.style.top = (-extra / 2) + "px";
+}
+if ("ResizeObserver" in window) new ResizeObserver(anchorCard).observe(cardEl);
+window.addEventListener("resize", anchorCard);
+document.fonts.ready.then(anchorCard);
+anchorCard();
+
+startBtn.addEventListener("click", toggle);
+fsBtn.addEventListener("click", toggleFullscreen);
+resetBtn.addEventListener("click", reset);
+window.addEventListener("resize", fitTime);
+// Se il font (es. Inter) arriva dopo il primo fit, ricalcola la misura
+document.fonts.ready.then(() => fitTime());
+
+document.addEventListener("keydown", (e) => {
+  if (e.target instanceof HTMLInputElement) return;
+  if (e.code === "Space") {
+    e.preventDefault();
+    toggle();
+  } else if (e.key === "r" || e.key === "R") {
+    reset();
+  } else if (e.key === "f" || e.key === "F") {
+    toggleFullscreen();
+  }
+});
+
+// ---- Logo personalizzabile (alto a sinistra) ----
+const logoEl = $("logo"), logoImg = $("logoImg"), logoTxt = $("logoTxt"),
+      logoPh = $("logoPh"),
+      logoFile = $("logoFile"), logoUrlIn = $("logoUrlIn"),
+      logoTxtIn = $("logoTxtIn"), logoSizeIn = $("logoSizeIn"),
+      logoErr = $("logoErr"),
+      logoClear = $("logoClear");
+
+const LOGO_KEY = "countdown-logo";
+const SIZE_KEY = "countdown-logo-size";
+let logo = null; // { type: "image", value } | { type: "text", value }
+let logoSize = 168;
+
+function setLogoSize(px) {
+  logoSize = Math.min(450, Math.max(56, px));
+  document.documentElement.style.setProperty("--logo-size", logoSize + "px");
+  try { localStorage.setItem(SIZE_KEY, String(logoSize)); }
+  catch (err) { console.warn("Impossibile salvare la dimensione:", err); }
+}
+
+function showLogoErr(msg) {
+  if (msg) { logoErr.textContent = msg; logoErr.hidden = false; }
+  else logoErr.hidden = true;
+}
+
+function setLogoOverride(l) {
+  logoOverride = l || null;
+  applyLogo();
+}
+
+function applyLogo() {
+  // Nascondi TUTTI gli elementi con doppio meccanismo (attributo hidden +
+  // display inline), poi mostra solo quello corretto: è impossibile che
+  // immagine, testo e placeholder coesistano sullo schermo.
+  for (const el of [logoImg, logoTxt, logoPh]) {
+    el.hidden = true;
+    el.style.display = "none";
+  }
+  const shown = logoOverride || logo; // logo del timer di coda, altrimenti quello generale
+  if (shown && shown.type === "image") {
+    logoImg.src = shown.value;
+    logoImg.hidden = false;
+    logoImg.style.display = "";
+  } else if (shown && shown.type === "text") {
+    logoTxt.textContent = shown.value;
+    logoTxt.hidden = false;
+    logoTxt.style.display = "";
+  } else {
+    logoPh.hidden = false;
+    logoPh.style.display = "";
+  }
+  // Segna se c'è un logo reale: a schermo intero il placeholder resta nascosto
+  logoEl.classList.toggle("has-logo", !!shown);
+}
+
+function saveLogo() {
+  try {
+    if (logo) localStorage.setItem(LOGO_KEY, JSON.stringify(logo));
+    else localStorage.removeItem(LOGO_KEY);
+  } catch (err) {
+    console.warn("Impossibile salvare il logo:", err);
+  }
+}
+
+function loadLogo() {
+  try {
+    const raw = localStorage.getItem(LOGO_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (parsed && (parsed.type === "image" || parsed.type === "text") && typeof parsed.value === "string") {
+      logo = parsed;
+    }
+  } catch (err) {
+    console.warn("Logo salvato non valido:", err);
+  }
+}
+
+logoImg.addEventListener("error", () => {
+  // Logo di un timer di coda non caricabile: si torna al logo generale
+  if (logoOverride && logoOverride.type === "image") {
+    logoOverride = null;
+    applyLogo();
+    return;
+  }
+  // URL o immagine non raggiungibile: avvisa e torna al placeholder
+  if (logo && logo.type === "image") {
+    logo = null;
+    saveLogo();
+    applyLogo();
+    alert(tr("alert_img_removed"));
+  }
+});
+
+logoFile.addEventListener("change", () => {
+  const file = logoFile.files[0];
+  logoFile.value = "";
+  if (!file) return;
+  if (!file.type.startsWith("image/")) { alert(tr("alert_select_image")); return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      // Ridimensiona a max 450 px: mantiene il localStorage leggero
+      const scale = Math.min(1, 450 / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+      logo = { type: "image", value: canvas.toDataURL("image/png") };
+      logoUrlIn.value = "";
+      logoTxtIn.value = "";
+      showLogoErr("");
+      saveLogo();
+      applyLogo();
+    };
+    img.onerror = () => alert(tr("alert_read_img"));
+    img.src = reader.result;
+  };
+  reader.onerror = () => alert(tr("alert_read_file"));
+  reader.readAsDataURL(file);
+});
+
+// Auto-applica il logo mentre si scrive o si incolla (debounce di 350 ms per
+// non sondare URL parziali): URL → verifica immagine, testo → immediato,
+// entrambi vuoti → rimuove il logo.
+function applyLogoFromInputs() {
+  const url = logoUrlIn.value.trim();
+  const txt = logoTxtIn.value.trim();
+  if (url) {
+    // Verifica che l'URL sia raggiungibile PRIMA di applicarlo
+    const probe = new Image();
+    probe.onload = () => {
+      showLogoErr("");
+      logo = { type: "image", value: url };
+      saveLogo();
+      applyLogo();
+    };
+    probe.onerror = () => showLogoErr(tr("url_unreachable_check"));
+    probe.src = url;
+  } else if (txt) {
+    showLogoErr("");
+    logo = { type: "text", value: txt };
+    saveLogo();
+    applyLogo();
+  } else {
+    showLogoErr("");
+    logo = null;
+    saveLogo();
+    applyLogo();
+  }
+}
+let logoApplyTimer = 0;
+for (const el of [logoUrlIn, logoTxtIn]) {
+  el.addEventListener("input", () => {
+    clearTimeout(logoApplyTimer);
+    logoApplyTimer = setTimeout(applyLogoFromInputs, 350);
+  });
+}
+
+logoClear.addEventListener("click", () => {
+  logo = null;
+  logoUrlIn.value = "";
+  logoTxtIn.value = "";
+  showLogoErr("");
+  saveLogo();
+  applyLogo();
+});
+logoSizeIn.addEventListener("input", () => setLogoSize(parseInt(logoSizeIn.value, 10)));
+
+try {
+  const saved = parseInt(localStorage.getItem(SIZE_KEY), 10);
+  if (!Number.isNaN(saved)) logoSize = saved;
+} catch (err) { console.warn("Dimensione salvata non valida:", err); }
+logoSizeIn.value = String(logoSize);
+setLogoSize(logoSize);
+loadLogo();
+// La sezione è sempre visibile: sincronizza i campi col logo salvato
+logoUrlIn.value = logo && logo.type === "image" ? logo.value : "";
+logoTxtIn.value = logo && logo.type === "text" ? logo.value : "";
+applyLogo();
+
+// ---- PWA (suggerimento 11): service worker per l'uso offline.
+// Funziona solo in contesti sicuri (http/https), non su file://: la
+// registrazione viene quindi tentata solo quando il protocollo lo consente.
+if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch((err) => console.warn("Service worker non registrato:", err));
+  });
+}
+
+// ---- Importa / Esporta: snapshot completo in un unico file JSON ----------
+// Esporta TUTTO: modalità, titolo, font, colore e dimensione del titolo, tempo e
+// preset (anche quello attivo), suoni (compreso il file audio personalizzato),
+// bip al secondo, logo generale (immagine inclusa) e dimensione, colore
+// dell'interfaccia, preset personalizzati e l'intera coda con titolo, durata,
+// logo e colore di ogni timer. Immagini e audio sono già data URL in memoria:
+// basta un solo .json, senza librerie. L'import valida e normalizza OGNI campo
+// prima di applicare qualcosa, così un file errato non lascia l'app a metà.
+const exportBtn = $("exportBtn"), importBtn = $("importBtn"),
+      importFileIn = $("importFile"), ioMsg = $("ioMsg");
+let ioMsgTimer = 0;
+function showIoMsg(text, isErr) {
+  ioMsg.textContent = text;
+  ioMsg.classList.toggle("err", !!isErr);
+  ioMsg.hidden = false;
+  clearTimeout(ioMsgTimer);
+  ioMsgTimer = setTimeout(() => { ioMsg.hidden = true; }, 5000);
+}
+function savePref(key, val) {
+  try { localStorage.setItem(key, val); } catch (err) { console.warn("Preferenza non salvata:", key, err); }
+}
+
+function collectConfig() {
+  const rows = [];
+  for (const row of queueListEl.children) {
+    const d = row._d;
+    if (!d) continue;
+    rows.push({ title: d.title, h: d.h, m: d.m, s: d.s, logo: d.logo || null, theme: d.theme == null ? null : d.theme });
+  }
+  const ap = presetsWrap.querySelector(".preset.active");
+  return {
+    app: "countdown",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    mode: queueMode ? "queue" : "single",
+    // In modalità Coda titleInput mostra il titolo del timer di coda: quello del Singolo è salvato a parte
+    title: queueMode ? singleTitle : titleInput.value,
+    font: fontSel.value,
+    // Il colore va letto dalla variabile CSS (esadecimale): colorChip.style.background restituirebbe "rgb(...)"
+    color: document.documentElement.style.getPropertyValue("--tcolor").trim(),
+    titleSize: parseInt(titleSizeIn.value, 10),
+    time: { h: clampInt(hIn.value, 0, 99), m: clampInt(mIn.value, 0, 59), s: clampInt(sIn.value, 0, 59) },
+    activePreset: ap ? { kind: "builtin", min: Number(ap.dataset.min) }
+      : activeCustom >= 0 ? { kind: "custom", index: activeCustom } : null,
+    presets: customPresets.map((p) => (p ? { h: p.h, m: p.m, s: p.s } : null)),
+    sound: soundSel.value,
+    soundOn: soundOnChk.checked,
+    volume: parseInt(volIn.value, 10),
+    customSound: customSoundUrl,
+    tickBeep: tickBeepChk.checked,
+    tickSec: tickSecVal,
+    logo: logo,
+    logoSize: logoSize,
+    theme: baseTheme, // il colore scelto a destra, non quello temporaneo di un timer di coda
+    queue: rows
+  };
+}
+
+exportBtn.addEventListener("click", () => {
+  try {
+    const cfg = collectConfig();
+    const blob = new Blob([JSON.stringify(cfg, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "countdown-config.json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showIoMsg(tr("io_exported", { q: timersInQueue(cfg.queue.length) }), false);
+  } catch (err) {
+    console.warn("Esportazione fallita:", err);
+    showIoMsg(tr("io_export_fail"), true);
+  }
+});
+
+// --- Validazione e normalizzazione: nessun campo viene applicato senza controllo ---
+const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+function normLogo(l) {
+  if (!l || typeof l !== "object" || typeof l.value !== "string") return null;
+  if (l.type === "image" && (/^data:image\//i.test(l.value) || /^https?:\/\//i.test(l.value))) return { type: "image", value: l.value };
+  if (l.type === "text" && l.value.length > 0) return { type: "text", value: Array.from(l.value).slice(0, 8).join("") };
+  return null;
+}
+function normTime(t) {
+  if (!t || !Number.isInteger(t.h) || !Number.isInteger(t.m) || !Number.isInteger(t.s)) return null;
+  if (t.h < 0 || t.h > 99 || t.m < 0 || t.m > 59 || t.s < 0 || t.s > 59) return null;
+  return { h: t.h, m: t.m, s: t.s };
+}
+// undefined = campo assente o non valido (si lascia com'è); null = valore "vuoto" esplicito
+function normConfig(d) {
+  if (!d || typeof d !== "object" || d.app !== "countdown" || d.version !== 1) throw new Error("formato non riconosciuto");
+  const clampNum = (v, lo, hi) => (typeof v === "number" && Number.isFinite(v)) ? Math.min(hi, Math.max(lo, Math.round(v))) : undefined;
+  const validTheme = (t) => typeof t === "string" && hasOwn(THEMES, t); // hasOwn: "constructor" & co. non sono temi
+  const c = {};
+  if (d.mode === "queue" || d.mode === "single") c.mode = d.mode;
+  if (typeof d.title === "string") c.title = d.title.slice(0, 40);
+  if (typeof d.font === "string" && Array.from(fontSel.options).some((o) => o.value === d.font)) c.font = d.font;
+  if (typeof d.color === "string" && TITLE_COLORS.includes(d.color)) c.color = d.color;
+  const ts = clampNum(d.titleSize, 100, 300);
+  if (ts !== undefined) c.titleSize = Math.round(ts / 5) * 5;
+  const t = normTime(d.time);
+  if (t && t.h + t.m + t.s > 0) c.time = t;
+  if (d.activePreset && typeof d.activePreset === "object") {
+    if (d.activePreset.kind === "builtin" && Number.isInteger(d.activePreset.min)) c.activePreset = { kind: "builtin", min: d.activePreset.min };
+    else if (d.activePreset.kind === "custom" && Number.isInteger(d.activePreset.index) && d.activePreset.index >= 0 && d.activePreset.index < 4) c.activePreset = { kind: "custom", index: d.activePreset.index };
+  }
+  if (Array.isArray(d.presets)) {
+    c.presets = [0, 1, 2, 3].map((i) => {
+      const p = normTime(d.presets[i]);
+      return p && p.h + p.m + p.s > 0 ? p : null;
+    });
+  }
+  if (typeof d.sound === "string" && Array.from(soundSel.options).some((o) => o.value === d.sound)) c.sound = d.sound;
+  if (typeof d.soundOn === "boolean") c.soundOn = d.soundOn;
+  const vol = clampNum(d.volume, 0, 100);
+  if (vol !== undefined) c.volume = vol;
+  if (hasOwn(d, "customSound")) c.customSound = typeof d.customSound === "string" && /^data:[^,]{0,100},/.test(d.customSound) ? d.customSound : null;
+  if (c.sound === "custom" && !c.customSound && !(c.customSound === undefined && customSoundUrl)) c.sound = "bip"; // "custom" senza file non ha senso
+  if (typeof d.tickBeep === "boolean") c.tickBeep = d.tickBeep;
+  if ([5, 10, 15, 30].includes(d.tickSec)) c.tickSec = d.tickSec;
+  if (hasOwn(d, "logo")) c.logo = normLogo(d.logo);
+  const ls = clampNum(d.logoSize, 56, 450);
+  if (ls !== undefined) c.logoSize = ls;
+  if (validTheme(d.theme)) c.theme = d.theme;
+  if (Array.isArray(d.queue)) {
+    c.queue = d.queue.slice(0, 500).map((it) => {
+      const tm = normTime(it);
+      if (!tm) return null;
+      return {
+        ...tm,
+        title: typeof it.title === "string" ? it.title.slice(0, 60) : "",
+        logo: normLogo(it.logo),
+        theme: validTheme(it.theme) ? it.theme : null
+      };
+    }).filter(Boolean);
+  }
+  return c;
+}
+
+function applyConfig(c) {
+  // Si parte sempre dalla modalità Singolo: chiude anche una coda in pausa e
+  // ripristina titolo/durata del Singolo prima di sovrascriverli
+  if (queueMode) setMode(false);
+
+  // Coda
+  if (c.queue) {
+    if (queueSel) deselectRow(true);
+    queueListEl.textContent = "";
+    for (const it of c.queue) queueListEl.appendChild(buildQueueRow(it));
+    writeMask({ title: "", ...DEFAULT_DUR, logo: null, theme: null });
+    maskDirty = false;
+    syncQueueUI();
+  }
+
+  // Titolo: testo, font, colore, dimensione
+  if (c.title !== undefined) { titleInput.value = c.title; titleDisplay.textContent = c.title; }
+  if (c.font) { fontSel.value = c.font; applyTitleFont(); savePref("cd_font", c.font); }
+  if (c.color) setColor(c.color); // salva da solo
+  if (c.titleSize !== undefined) { titleSizeIn.value = String(c.titleSize); applyTitleScale(); }
+
+  // Preset personalizzati (prima del tempo, così si può riattivare lo slot giusto)
+  if (c.presets) {
+    for (let i = 0; i < 4; i++) customPresets[i] = c.presets[i];
+    activeCustom = -1;
+    saveCustomPresets();
+    renderCustomPresets();
+    updateSaveBtn();
+  }
+
+  // Tempo del Singolo + preset attivo
+  if (c.time) {
+    clearActivePreset();
+    clearActiveCustomPreset();
+    hIn.value = String(c.time.h); mIn.value = String(c.time.m); sIn.value = String(c.time.s);
+    state.total = (c.time.h * 3600 + c.time.m * 60 + c.time.s) * 1000;
+    reset();
+    const ap = c.activePreset;
+    if (ap && ap.kind === "builtin" && c.time.h === 0 && c.time.s === 0 && c.time.m === ap.min) {
+      const b = presetsWrap.querySelector('.preset[data-min="' + ap.min + '"]');
+      if (b) b.classList.add("active");
+    } else if (ap && ap.kind === "custom") {
+      const p = customPresets[ap.index];
+      if (p && p.h === c.time.h && p.m === c.time.m && p.s === c.time.s) {
+        activeCustom = ap.index;
+        renderCustomPresets();
+      }
+    }
+  }
+
+  // Suoni (si salvano le stesse chiavi usate dai controlli: l'import sopravvive al ricaricamento)
+  if (c.customSound !== undefined) customSoundUrl = c.customSound;
+  if (c.sound) { soundSel.value = c.sound; savePref("cd_sound", c.sound); }
+  if (c.soundOn !== undefined) { soundOnChk.checked = c.soundOn; savePref("cd_sound_on", c.soundOn ? "1" : "0"); }
+  if (c.volume !== undefined) { volIn.value = String(c.volume); volVal.textContent = c.volume + "%"; savePref("cd_vol", String(c.volume)); }
+  if (c.tickBeep !== undefined) { tickBeepChk.checked = c.tickBeep; savePref("cd_tick_beep", c.tickBeep ? "1" : "0"); }
+  if (c.tickSec !== undefined) {
+    const r = document.querySelector('input[name="tickSec"][value="' + c.tickSec + '"]');
+    if (r) { r.checked = true; tickSecVal = c.tickSec; savePref("cd_tick_sec", String(c.tickSec)); }
+  }
+
+  // Logo generale (e i campi della sezione Logo, sempre visibili)
+  if (c.logoSize !== undefined) { logoSizeIn.value = String(c.logoSize); setLogoSize(c.logoSize); }
+  if (c.logo !== undefined) {
+    logo = c.logo;
+    saveLogo();
+    logoUrlIn.value = logo && logo.type === "image" ? logo.value : "";
+    logoTxtIn.value = logo && logo.type === "text" ? logo.value : "";
+    showLogoErr("");
+  }
+  applyLogo();
+
+  // Colore dell'interfaccia
+  if (c.theme !== undefined) setTheme(c.theme);
+
+  // Modalità: per ultima, così Coda mostra subito anteprima e colori giusti
+  if (c.mode === "queue") setMode(true);
+  else syncQueueUI();
+}
+
+importBtn.addEventListener("click", () => {
+  if (state.running) { alert(tr("alert_stop_first")); return; }
+  importFileIn.click();
+});
+importFileIn.addEventListener("change", () => {
+  const f = importFileIn.files[0];
+  importFileIn.value = ""; // permette di reimportare lo stesso file
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    let cfg;
+    try {
+      cfg = normConfig(JSON.parse(reader.result)); // tutto validato prima di toccare l'app
+    } catch (err) {
+      console.warn("Import fallito:", err);
+      showIoMsg(tr("io_invalid_file"), true);
+      return;
+    }
+    try {
+      applyConfig(cfg);
+      showIoMsg(tr("io_imported", { q: timersInQueue(cfg.queue ? cfg.queue.length : 0) }), false);
+    } catch (err) {
+      console.warn("Import interrotto:", err);
+      showIoMsg(tr("io_import_fail"), true);
+    }
+  };
+  reader.onerror = () => {
+    console.warn("Lettura del file fallita:", reader.error);
+    showIoMsg(tr("io_read_fail"), true);
+  };
+  reader.readAsText(f, "utf-8");
+});
+
+// ---- Avvio a schermo intero automatico ----
+// I browser permettono requestFullscreen() solo con un gesto utente (o se
+// al sito è già stata concessa l'autorizzazione). Si prova subito all'avvio;
+// se viene rifiutato, si entra in fullscreen al primo click o tasto premuto.
+enterFullscreen();
+if (!document.fullscreenElement) {
+  const armAutoFs = () => {
+    window.removeEventListener("pointerdown", armAutoFs);
+    window.removeEventListener("keydown", armAutoFs);
+    enterFullscreen(); // no-op se nel frattempo è già in fullscreen
+  };
+  window.addEventListener("pointerdown", armAutoFs);
+  window.addEventListener("keydown", armAutoFs);
+}
+
+applyI18n();
+render();
+</script>
+</body>
+</html>
